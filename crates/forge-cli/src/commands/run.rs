@@ -287,25 +287,58 @@ fn print_evaluation(report: &RunReport) {
         .checks
         .iter()
         .map(|check| {
-            let detail = match (check.verdict, check.exit_code) {
-                (Verdict::Pass, _) => format!("{}ms", check.duration_ms),
-                (_, Some(code)) => format!("exit {code}, {}ms", check.duration_ms),
-                (_, None) => format!("{}ms", check.duration_ms),
-            };
-            vec![check.name.clone(), check.verdict.to_string(), detail]
+            vec![
+                check.name.clone(),
+                check.kind.to_string(),
+                if check.required {
+                    "required"
+                } else {
+                    "optional"
+                }
+                .to_string(),
+                check.verdict.to_string(),
+                check.execution_status.as_str().to_string(),
+                check
+                    .exit_code
+                    .map(|code| format!("exit {code}, {}ms", check.duration_ms))
+                    .unwrap_or_else(|| format!("{}ms", check.duration_ms)),
+            ]
         })
         .collect();
 
-    println!("{}", output::table(&["check", "result", ""], &rows));
+    println!(
+        "{}",
+        output::table(
+            &["evaluator", "category", "policy", "result", "execution", ""],
+            &rows
+        )
+    );
+
+    let summary = evaluation.summary();
+    println!(
+        "\n{}",
+        output::fields(&[
+            ("Required", summary.required_count.to_string()),
+            ("Optional", summary.optional_count.to_string()),
+            ("Metrics", summary.metric_count.to_string()),
+            ("Execution errors", summary.execution_errors.to_string()),
+        ])
+    );
 
     for check in &evaluation.checks {
         if check.verdict != Verdict::Pass
             && let Some(detail) = &check.detail
         {
-            println!("\n  {} failed:", check.name);
+            println!("\n  {} detail:", check.name);
             for line in detail.lines().take(10) {
                 println!("    {line}");
             }
+        }
+        if let Some(path) = &check.output_path {
+            println!("  {} artifact: {}", check.name, path.display());
+        }
+        for warning in &check.warnings {
+            println!("  {} warning: {warning}", check.name);
         }
         for metric in &check.metrics {
             if !metric.name.ends_with(".duration_ms") {
@@ -356,7 +389,7 @@ fn outcome_note(report: &RunReport) -> &'static str {
         {
             "  (evaluation integrity was compromised)"
         }
-        RunOutcome::Inconclusive => "  (a check could not be executed)",
+        RunOutcome::Inconclusive => "  (evaluation evidence was inconclusive)",
         RunOutcome::Errored => "  (Forge could not complete the run)",
         _ => "",
     }

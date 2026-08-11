@@ -49,10 +49,13 @@ pub fn task_with(checks: &[(&str, &str)]) -> EngineeringTask {
             "tests" => evaluation.tests = Some(spec),
             "benchmark" => evaluation.benchmark = Some(spec.into()),
             "lint" => evaluation.lint = Some(spec),
+            "security" => evaluation.security = Some(spec),
+            "complexity" => evaluation.complexity = Some(spec.into()),
             "build" => evaluation.build = Some(spec),
             other => evaluation.custom.push(NamedCommand {
                 name: other.to_string(),
                 spec,
+                metrics_file: None,
             }),
         }
     }

@@ -184,11 +184,30 @@ fn result_rows(runs: &[RunReport]) -> Vec<Vec<String>> {
         .flat_map(|evaluation| evaluation.checks.iter().map(|check| check.name.clone()))
         .collect();
     for check_name in checks {
-        add_row(&mut rows, &check_name, runs, |run| {
+        let label = runs
+            .iter()
+            .filter_map(|run| run.evaluation.as_ref())
+            .find_map(|evaluation| evaluation.check(&check_name))
+            .map(|check| {
+                format!(
+                    "{} [{}{}]",
+                    check_name,
+                    check.kind,
+                    if check.required { "" } else { ", optional" }
+                )
+            })
+            .unwrap_or_else(|| check_name.clone());
+        add_row(&mut rows, &label, runs, |run| {
             run.evaluation
                 .as_ref()
                 .and_then(|evaluation| evaluation.check(&check_name))
-                .map(|check| check.verdict.to_string())
+                .map(|check| {
+                    if check.execution_error.is_some() {
+                        format!("{} (execution error)", check.verdict)
+                    } else {
+                        check.verdict.to_string()
+                    }
+                })
                 .unwrap_or_else(|| "missing".into())
         });
     }
@@ -197,14 +216,24 @@ fn result_rows(runs: &[RunReport]) -> Vec<Vec<String>> {
         .iter()
         .filter_map(|run| run.evaluation.as_ref())
         .flat_map(|evaluation| evaluation.metrics.iter())
-        .filter(|metric| metric.source == "benchmark" && !metric.name.ends_with(".duration_ms"))
-        .map(|metric| metric.name.clone())
+        .filter(|metric| !metric.name.ends_with(".duration_ms"))
+        .map(|metric| (metric.source.clone(), metric.name.clone()))
         .collect();
-    for metric_name in metrics {
-        add_row(&mut rows, &metric_name, runs, |run| {
+    for (source, metric_name) in metrics {
+        let label = if source == "benchmark" {
+            metric_name.clone()
+        } else {
+            format!("{source}: {metric_name}")
+        };
+        add_row(&mut rows, &label, runs, |run| {
             run.evaluation
                 .as_ref()
-                .and_then(|evaluation| evaluation.metric(&metric_name))
+                .and_then(|evaluation| {
+                    evaluation
+                        .metrics
+                        .iter()
+                        .find(|metric| metric.source == source && metric.name == metric_name)
+                })
                 .map(format_metric)
                 .unwrap_or_else(|| "missing".into())
         });

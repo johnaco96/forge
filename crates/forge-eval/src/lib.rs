@@ -7,6 +7,7 @@
 #![deny(rust_2018_idioms)]
 
 pub mod benchmark;
+pub mod builtins;
 pub mod command;
 pub mod error;
 pub mod evaluator;
@@ -16,7 +17,11 @@ pub mod set;
 pub(crate) mod test_support;
 
 pub use benchmark::BenchmarkEvaluator;
+pub use builtins::{
+    BuildEvaluator, ComplexityEvaluator, CustomEvaluator, LintEvaluator, SecurityEvaluator,
+    TestEvaluator,
+};
 pub use command::CommandEvaluator;
 pub use error::{EvalError, EvalResult};
-pub use evaluator::{EvalContext, Evaluator};
-pub use set::EvaluatorSet;
+pub use evaluator::{EvalContext, EvaluationContext, Evaluator};
+pub use set::{EvaluationEngine, EvaluationPlan, EvaluatorSet};

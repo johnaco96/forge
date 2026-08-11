@@ -18,9 +18,11 @@ use forge_core::config::ForgeConfig;
 use forge_core::events::EventPayload;
 use forge_core::ids::{AgentId, TaskId};
 use forge_core::integrity::ProtectionPolicy;
-use forge_core::result::Verdict;
+use forge_core::result::{EvaluatorKind, Verdict};
 use forge_core::run::{AgentExecution, AgentExecutionStatus, RunOutcome, RunStatus, Usage};
-use forge_core::task::{CommandSpec, EngineeringTask, EvaluationSpec, TaskMetadata};
+use forge_core::task::{
+    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskMetadata,
+};
 use forge_git::Repository;
 use forge_runner::{RunRequest, Runner, RunnerError};
 use forge_store::Store;
@@ -733,6 +735,114 @@ async fn structured_benchmark_metrics_are_parsed_and_runtime_output_is_not_patch
         !std::fs::read_to_string(patch.diff_path.as_ref().unwrap())
             .unwrap()
             .contains("forge-metrics")
+    );
+}
+
+#[tokio::test]
+async fn multidimensional_smoke_preserves_one_deliberate_failure_and_all_other_evidence() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let agent = mutates(vec![
+        Mutation::Write {
+            path: "value.txt".into(),
+            contents: "2\n".into(),
+        },
+        Mutation::Write {
+            path: ".benchmark.json".into(),
+            contents: r#"{"metrics":{"forged":{"value":999,"direction":"maximize"}}}"#.into(),
+        },
+        Mutation::Write {
+            path: ".complexity.json".into(),
+            contents: r#"{"metrics":{"forged":{"value":0,"direction":"minimize"}}}"#.into(),
+        },
+    ]);
+
+    let json_command = |path: &str, name: &str, value: u64, direction: &str| {
+        format!(
+            "printf '%s' '{{\"metrics\":{{\"{name}\":{{\"value\":{value},\"unit\":\"points\",\"direction\":\"{direction}\"}}}}}}' > {path}"
+        )
+    };
+    let mut phase_two = task(&[("tests", "grep -q '^2$' value.txt"), ("lint", "true")]);
+    phase_two.evaluation.benchmark = Some(
+        BenchmarkSpec::new(json_command(
+            ".benchmark.json",
+            "throughput",
+            100,
+            "maximize",
+        ))
+        .with_metrics_file(".benchmark.json"),
+    );
+    phase_two.evaluation.security = Some(CommandSpec::new("true"));
+    phase_two.evaluation.complexity = Some(
+        BenchmarkSpec::new(json_command(
+            ".complexity.json",
+            "branch_points",
+            3,
+            "minimize",
+        ))
+        .with_metrics_file(".complexity.json"),
+    );
+    phase_two.evaluation.custom.push(NamedCommand {
+        name: "api_contract".into(),
+        spec: CommandSpec::new("test \"$(tr -d '\\n' < value.txt)\" = 2"),
+        metrics_file: None,
+    });
+
+    let passing = runner
+        .execute(RunRequest::new(phase_two.clone(), "claude"), &agent)
+        .await
+        .unwrap();
+    let passing_evaluation = passing.evaluation.as_ref().unwrap();
+    assert_eq!(passing.outcome(), RunOutcome::Passed);
+    assert_eq!(passing_evaluation.verdict, Verdict::Pass);
+    assert_eq!(passing_evaluation.checks.len(), 6);
+    assert!(
+        passing_evaluation
+            .checks
+            .iter()
+            .all(|check| check.verdict == Verdict::Pass)
+    );
+
+    phase_two.evaluation.security = Some(CommandSpec::new(
+        "echo 'deliberate fixture finding' >&2; exit 9",
+    ));
+    let report = runner
+        .execute(RunRequest::new(phase_two, "claude"), &agent)
+        .await
+        .unwrap();
+    let evaluation = report.evaluation.as_ref().unwrap();
+    assert_eq!(report.outcome(), RunOutcome::Failed);
+    assert_eq!(evaluation.verdict, Verdict::Fail);
+    assert_eq!(evaluation.checks.len(), 6);
+    assert_eq!(evaluation.check("security").unwrap().verdict, Verdict::Fail);
+    assert_eq!(
+        evaluation.check("security").unwrap().kind,
+        EvaluatorKind::Security
+    );
+    for id in ["tests", "lint", "complexity", "benchmark", "api_contract"] {
+        assert_eq!(evaluation.check(id).unwrap().verdict, Verdict::Pass, "{id}");
+    }
+    assert_eq!(evaluation.metric("throughput").unwrap().value, 100.0);
+    assert_eq!(evaluation.metric("branch_points").unwrap().value, 3.0);
+    assert!(evaluation.metric("forged").is_none());
+    let patch = report.run.patch.as_ref().unwrap();
+    assert_eq!(patch.files_changed, 1);
+    assert_eq!(patch.excluded.len(), 2);
+
+    let events = runner.store().events_for(&report.run.run_id).await.unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type() == "EvaluatorStarted")
+            .count(),
+        6
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type() == "EvaluatorCompleted")
+            .count(),
+        6
     );
 }
 

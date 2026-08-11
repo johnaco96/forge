@@ -26,6 +26,23 @@ evaluation:
   lint:
     command: cargo clippy -- -D warnings
     timeout_secs: 300
+  security:
+    command: "! grep -R -n 'unsafe' src"
+  complexity:
+    command: >-
+      branches=$(grep -Eoc 'if |match |for |while ' src/lib.rs || true);
+      printf '{"metrics":{"branch_points":{"value":%s,"unit":"points","direction":"minimize"}}}'
+      "$branches" > .forge-complexity.json
+    metrics_file: .forge-complexity.json
+  benchmark:
+    command: >-
+      cases=$(grep -c '^#\[test\]' tests/median.rs);
+      printf '{"metrics":{"covered_cases":{"value":%s,"unit":"cases","direction":"maximize"}}}'
+      "$cases" > .forge-benchmark.json
+    metrics_file: .forge-benchmark.json
+  custom:
+    - id: public_api
+      command: "grep -Fq 'pub fn median(values: &mut [f64]) -> Option<f64>' src/lib.rs"
 
 metadata:
   task_type: implementation

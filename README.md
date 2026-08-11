@@ -30,14 +30,14 @@ base commit into a comparative experiment.
 | Git worktree isolation with safety invariants | ✅ |
 | Subprocess execution: timeouts, output caps, process-group cleanup | ✅ |
 | Environment policy and secret redaction | ✅ |
-| Independent command-based evaluation | ✅ |
-| SQLite experience ledger (runs, trajectories, evaluations, metrics) | ✅ |
+| Typed test, benchmark, lint, security, complexity, and custom evaluation | ✅ Phase 2 review candidate |
+| SQLite experience ledger (runs, trajectories, evaluator results, metrics) | ✅ |
 | `forge init`, `forge agent list`, `forge task validate` | ✅ |
 | **Claude Code adapter and `forge run`** | ✅ |
 | Protected evaluation inputs, candidate patch policy, security posture | ✅ |
 | Structured benchmark metric contract | ✅ |
 | **Codex adapter and `forge run --agent codex`** | ✅ |
-| **`forge compete task.yaml --agents claude,codex`** | ✅ Phase 1B review candidate |
+| **`forge compete task.yaml --agents claude,codex`** | ✅ |
 | History queries, learned routing, multi-agent | ⬜ later |
 
 ---
@@ -139,6 +139,9 @@ metadata:
 `repository` must match the `name` in `.forge/config.toml`, so a task cannot be
 run against the wrong repository by accident.
 
+See [`docs/evaluation.md`](docs/evaluation.md) for every evaluator category,
+required versus optional policy, structured metric output, and trust rules.
+
 ---
 
 ## What a run does
@@ -189,9 +192,14 @@ Evaluation integrity
   clean
 
 Evaluation (run by Forge, not by the agent)
-  CHECK  RESULT
-  tests  PASS    97ms
-  lint   PASS    125ms
+  EVALUATOR  CATEGORY  POLICY    RESULT  EXECUTION
+  tests      test      required  PASS    completed  exit 0, 97ms
+  lint       lint      required  PASS    completed  exit 0, 125ms
+
+  Required          2
+  Optional          0
+  Metrics           2
+  Execution errors  0
 
 Overall
   PASS
@@ -252,6 +260,13 @@ The ledger is plain SQLite — query it directly:
 
 ```bash
 sqlite3 .forge/forge.db "SELECT run_id, status, agent_status, outcome, cost_usd FROM runs"
+```
+
+Evaluator results are normalized too:
+
+```bash
+sqlite3 .forge/forge.db \
+  "SELECT run_id, evaluator_id, kind, required, verdict, execution_status FROM evaluator_results"
 ```
 
 ### Configuration
@@ -387,9 +402,11 @@ Git ignore rules, excludes Forge-owned and oversized artifacts with recorded
 reasons, flags binary additions, and commits only the policy-approved candidate
 to the durable run branch.
 
-**Missing evidence is not a pass.** A check that could not be executed is
-`Inconclusive`, distinct from `Fail`. An evaluation with no checks does not
-report success.
+**Missing evidence is not a pass.** An evaluator that could not execute is
+recorded as an execution error with an `Inconclusive` result, distinct from a
+tool that executed and returned `Fail`. Required evaluators determine the
+overall verdict; optional evaluator results remain visible but do not block a
+pass. Existing task files default every evaluator to required.
 
 **Raw measurements are never discarded.** Evaluations store raw metrics in
 their original units alongside normalized dimensions, and there is deliberately
@@ -440,5 +457,8 @@ Or as one controlled infrastructure experiment from an identical base:
 forge compete task.yaml --agents claude,codex
 ```
 
-The fixture ships failing tests and an unimplemented function, so a `PASS`
-requires the agent to have done real work.
+The fixture ships four failing tests and an unimplemented function, so a
+`PASS` requires the agent to have done real work. Its task declares test, lint,
+security, complexity, benchmark, and custom evaluators. The automated pipeline
+suite runs the same six-dimensional shape through a deterministic adapter, then
+changes only security to verify that just that evaluator flips to `FAIL`.

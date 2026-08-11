@@ -458,14 +458,15 @@ impl Store {
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO evaluations (run_id, verdict, started_at, finished_at, checks_json, dimensions_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO evaluations (run_id, verdict, started_at, finished_at, checks_json, dimensions_json, summary_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT (run_id) DO UPDATE SET
                  verdict = excluded.verdict,
                  started_at = excluded.started_at,
                  finished_at = excluded.finished_at,
                  checks_json = excluded.checks_json,
-                 dimensions_json = excluded.dimensions_json",
+                 dimensions_json = excluded.dimensions_json,
+                 summary_json = excluded.summary_json",
         )
         .bind(evaluation.run_id.as_str())
         .bind(enum_str(&evaluation.verdict)?)
@@ -473,8 +474,44 @@ impl Store {
         .bind(evaluation.finished_at.to_rfc3339())
         .bind(serde_json::to_string(&evaluation.checks)?)
         .bind(serde_json::to_string(&evaluation.dimensions)?)
+        .bind(serde_json::to_string(&evaluation.summary())?)
         .execute(&mut *tx)
         .await?;
+
+        sqlx::query("DELETE FROM evaluator_results WHERE run_id = ?1")
+            .bind(evaluation.run_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        for check in &evaluation.checks {
+            sqlx::query(
+                "INSERT INTO evaluator_results (
+                    run_id, evaluator_id, kind, required, verdict, execution_status,
+                    duration_ms, command, exit_code, artifact_path, metric_count,
+                    warning_count, execution_error, result_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            )
+            .bind(evaluation.run_id.as_str())
+            .bind(&check.name)
+            .bind(check.kind.as_str())
+            .bind(check.required)
+            .bind(enum_str(&check.verdict)?)
+            .bind(check.execution_status.as_str())
+            .bind(check.duration_ms as i64)
+            .bind(check.command.as_deref())
+            .bind(check.exit_code)
+            .bind(
+                check
+                    .output_path
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
+            )
+            .bind(check.metrics.len() as i64)
+            .bind(check.warnings.len() as i64)
+            .bind(check.execution_error.as_deref())
+            .bind(serde_json::to_string(check)?)
+            .execute(&mut *tx)
+            .await?;
+        }
 
         // Metrics are rewritten wholesale so a re-evaluation cannot leave
         // measurements from a previous attempt behind.
@@ -685,7 +722,9 @@ mod tests {
     };
     use forge_core::ids::AgentId;
     use forge_core::integrity::ProtectionPolicy;
-    use forge_core::result::{CheckResult, Direction, Metric, Verdict};
+    use forge_core::result::{
+        CheckResult, Direction, EvaluatorExecutionStatus, EvaluatorKind, Metric, Verdict,
+    };
     use forge_core::task::{CommandSpec, EvaluationSpec, TaskMetadata};
 
     async fn store() -> Store {
@@ -962,8 +1001,10 @@ mod tests {
             run.run_id.clone(),
             vec![CheckResult {
                 name: "tests".into(),
-                kind: "command".into(),
+                kind: EvaluatorKind::Test,
+                required: true,
                 verdict: Verdict::Pass,
+                execution_status: EvaluatorExecutionStatus::Completed,
                 command: Some("cargo test --workspace".into()),
                 exit_code: Some(0),
                 duration_ms: 702_000,
@@ -985,6 +1026,8 @@ mod tests {
                     )
                     .with_unit("GB/s"),
                 ],
+                warnings: Vec::new(),
+                execution_error: None,
             }],
             now,
             now,
@@ -1004,6 +1047,33 @@ mod tests {
             Some("GB/s")
         );
         assert_eq!(loaded.checks, evaluation.checks);
+
+        let row = sqlx::query(
+            "SELECT kind, required, verdict, execution_status, metric_count
+             FROM evaluator_results WHERE run_id = ?1 AND evaluator_id = 'tests'",
+        )
+        .bind(run.run_id.as_str())
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+        assert_eq!(row.get::<String, _>("kind"), "test");
+        assert!(row.get::<bool, _>("required"));
+        assert_eq!(row.get::<String, _>("verdict"), "pass");
+        assert_eq!(row.get::<String, _>("execution_status"), "completed");
+        assert_eq!(row.get::<i64, _>("metric_count"), 2);
+
+        let summary: String =
+            sqlx::query_scalar("SELECT summary_json FROM evaluations WHERE run_id = ?1")
+                .bind(run.run_id.as_str())
+                .fetch_one(store.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            serde_json::from_str::<forge_core::EvaluationSummary>(&summary)
+                .unwrap()
+                .evaluator_count,
+            1
+        );
     }
 
     #[tokio::test]
@@ -1016,8 +1086,10 @@ mod tests {
         let now = Utc::now();
         let check = |value: f64| CheckResult {
             name: "tests".into(),
-            kind: "command".into(),
+            kind: EvaluatorKind::Test,
+            required: true,
             verdict: Verdict::Pass,
+            execution_status: EvaluatorExecutionStatus::Completed,
             command: None,
             exit_code: Some(0),
             duration_ms: 1,
@@ -1029,6 +1101,8 @@ mod tests {
                 "tests",
                 Direction::LowerIsBetter,
             )],
+            warnings: Vec::new(),
+            execution_error: None,
         };
 
         store
@@ -1089,14 +1163,18 @@ mod tests {
                 run.run_id.clone(),
                 vec![CheckResult {
                     name: "tests".into(),
-                    kind: "command".into(),
+                    kind: EvaluatorKind::Test,
+                    required: true,
                     verdict: Verdict::Pass,
+                    execution_status: EvaluatorExecutionStatus::Completed,
                     command: None,
                     exit_code: Some(0),
                     duration_ms: 5,
                     detail: None,
                     output_path: None,
                     metrics: vec![],
+                    warnings: Vec::new(),
+                    execution_error: None,
                 }],
                 now,
                 now,

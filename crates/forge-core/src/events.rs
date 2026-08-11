@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{RunId, TaskId};
-use crate::result::{Dimension, Verdict};
+use crate::result::{Dimension, EvaluatorExecutionStatus, EvaluatorKind, Verdict};
 use crate::run::{AgentExecutionStatus, RunOutcome};
 
 /// One recorded occurrence in a run.
@@ -121,6 +121,27 @@ pub enum EventPayload {
     EvaluationStarted {
         evaluators: Vec<String>,
     },
+    EvaluatorStarted {
+        evaluator_id: String,
+        kind: EvaluatorKind,
+        required: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+    },
+    EvaluatorCompleted {
+        evaluator_id: String,
+        kind: EvaluatorKind,
+        verdict: Verdict,
+        execution_status: EvaluatorExecutionStatus,
+        duration_ms: u64,
+        metric_count: usize,
+    },
+    EvaluatorFailed {
+        evaluator_id: String,
+        kind: EvaluatorKind,
+        required: bool,
+        error: String,
+    },
     EvaluationCompleted {
         verdict: Verdict,
     },
@@ -158,6 +179,9 @@ impl EventPayload {
             Self::AgentFinished { .. } => "AgentFinished",
             Self::PatchCaptured { .. } => "PatchCaptured",
             Self::EvaluationStarted { .. } => "EvaluationStarted",
+            Self::EvaluatorStarted { .. } => "EvaluatorStarted",
+            Self::EvaluatorCompleted { .. } => "EvaluatorCompleted",
+            Self::EvaluatorFailed { .. } => "EvaluatorFailed",
             Self::EvaluationCompleted { .. } => "EvaluationCompleted",
             Self::RunScored { .. } => "RunScored",
             Self::RunCompleted { .. } => "RunCompleted",
@@ -346,6 +370,26 @@ mod tests {
             },
             EventPayload::EvaluationStarted {
                 evaluators: vec!["tests".into()],
+            },
+            EventPayload::EvaluatorStarted {
+                evaluator_id: "tests".into(),
+                kind: EvaluatorKind::Test,
+                required: true,
+                command: Some("cargo test".into()),
+            },
+            EventPayload::EvaluatorCompleted {
+                evaluator_id: "tests".into(),
+                kind: EvaluatorKind::Test,
+                verdict: Verdict::Pass,
+                execution_status: EvaluatorExecutionStatus::Completed,
+                duration_ms: 1,
+                metric_count: 1,
+            },
+            EventPayload::EvaluatorFailed {
+                evaluator_id: "lint".into(),
+                kind: EvaluatorKind::Lint,
+                required: false,
+                error: "could not start".into(),
             },
             EventPayload::EvaluationCompleted {
                 verdict: Verdict::Pass,

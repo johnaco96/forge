@@ -53,6 +53,15 @@ evaluation:
   #   command: ./bench/run.sh
   #   metrics_file: .forge-metrics.json
   #   timeout_secs: 1800
+  # security:
+  #   command: ./scripts/security-check.sh
+  #   required: false
+  # complexity:
+  #   command: ./scripts/complexity.sh
+  #   metrics_file: .forge-complexity.json
+  # custom:
+  #   - id: api_contract
+  #     command: ./scripts/api-contract.sh
 
 # Evaluation inputs are compared with the base commit after the agent runs.
 protected_paths:

@@ -17,8 +17,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use forge_core::events::EventSink;
-use forge_core::result::CheckResult;
-use forge_core::task::EngineeringTask;
+use forge_core::ids::{RunId, TaskId};
+use forge_core::result::{CheckResult, EvaluatorKind};
+use forge_core::run::PatchSummary;
+use forge_core::task::{EngineeringTask, EvaluationSpec};
 use forge_core::workspace::Workspace;
 use forge_executor::ProcessRunner;
 
@@ -27,10 +29,17 @@ use crate::error::EvalResult;
 /// Everything an evaluator is given.
 ///
 /// Notably absent: the agent's own report of what it did.
-pub struct EvalContext<'a> {
+pub struct EvaluationContext<'a> {
+    pub run_id: &'a RunId,
+    pub task_id: &'a TaskId,
+    pub repository: &'a str,
+    pub base_commit: &'a str,
     /// The workspace containing the change under evaluation.
     pub workspace: &'a Workspace,
-    pub task: &'a EngineeringTask,
+    /// Immutable task configuration captured before agent execution.
+    pub evaluation_config: &'a EvaluationSpec,
+    /// Trusted patch evidence captured by Forge, when evaluation follows a run.
+    pub patch: Option<&'a PatchSummary>,
     pub runner: &'a ProcessRunner,
     pub events: &'a dyn EventSink,
     /// Applied to checks that do not declare their own timeout.
@@ -40,7 +49,7 @@ pub struct EvalContext<'a> {
     pub artifacts_dir: Option<PathBuf>,
 }
 
-impl<'a> EvalContext<'a> {
+impl<'a> EvaluationContext<'a> {
     pub fn new(
         workspace: &'a Workspace,
         task: &'a EngineeringTask,
@@ -48,13 +57,23 @@ impl<'a> EvalContext<'a> {
         events: &'a dyn EventSink,
     ) -> Self {
         Self {
+            run_id: &workspace.run_id,
+            task_id: &task.task_id,
+            repository: &task.repository,
+            base_commit: &workspace.base_commit,
             workspace,
-            task,
+            evaluation_config: &task.evaluation,
+            patch: None,
             runner,
             events,
             default_timeout: None,
             artifacts_dir: None,
         }
+    }
+
+    pub fn with_patch(mut self, patch: &'a PatchSummary) -> Self {
+        self.patch = Some(patch);
+        self
     }
 
     pub fn with_default_timeout(mut self, timeout: Option<Duration>) -> Self {
@@ -119,10 +138,18 @@ pub fn sanitize_segment(raw: &str) -> String {
 #[async_trait]
 pub trait Evaluator: Send + Sync {
     /// Unique within an evaluation, e.g. `tests`.
-    fn name(&self) -> &str;
+    fn id(&self) -> &str;
 
-    /// The evaluator implementation kind, e.g. `command`.
-    fn kind(&self) -> &str;
+    /// Provider-agnostic evaluator category.
+    fn kind(&self) -> EvaluatorKind;
+
+    /// Whether this evaluator participates in the overall verdict.
+    fn required(&self) -> bool;
+
+    /// Trusted command displayed in lifecycle events, if command-backed.
+    fn command(&self) -> Option<&str> {
+        None
+    }
 
     /// Measures the change.
     ///
@@ -130,8 +157,11 @@ pub trait Evaluator: Send + Sync {
     /// A failing check is a [`CheckResult`] with a `Fail` verdict, not an
     /// error — that distinction is what keeps "the code is broken" separate
     /// from "Forge is broken".
-    async fn evaluate(&self, ctx: &EvalContext<'_>) -> EvalResult<CheckResult>;
+    async fn evaluate(&self, ctx: &EvaluationContext<'_>) -> EvalResult<CheckResult>;
 }
+
+/// Backwards-compatible short name for callers from earlier phases.
+pub type EvalContext<'a> = EvaluationContext<'a>;
 
 #[cfg(test)]
 mod tests {

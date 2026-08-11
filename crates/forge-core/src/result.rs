@@ -16,6 +16,67 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::RunId;
 
+/// Provider-agnostic evaluator category.
+///
+/// `Command` is retained only to deserialize Phase 0-1 ledger records whose
+/// command-backed checks had not yet been assigned a more precise kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluatorKind {
+    Test,
+    #[serde(alias = "structured_benchmark")]
+    Benchmark,
+    Lint,
+    Security,
+    Complexity,
+    Custom,
+    Build,
+    Command,
+}
+
+impl EvaluatorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Test => "test",
+            Self::Benchmark => "benchmark",
+            Self::Lint => "lint",
+            Self::Security => "security",
+            Self::Complexity => "complexity",
+            Self::Custom => "custom",
+            Self::Build => "build",
+            Self::Command => "command",
+        }
+    }
+}
+
+impl std::fmt::Display for EvaluatorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Whether Forge executed the evaluator itself successfully.
+///
+/// A completed evaluator can still return [`Verdict::Fail`]; `Error` means
+/// the measurement could not be performed and therefore yields inconclusive
+/// evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluatorExecutionStatus {
+    #[default]
+    Completed,
+    Error,
+}
+
+impl EvaluatorExecutionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Error => "error",
+        }
+    }
+}
+
 /// The outcome of a check or of a whole evaluation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -298,9 +359,14 @@ impl Metric {
 pub struct CheckResult {
     /// Unique within an evaluation, e.g. `tests` or a custom check's name.
     pub name: String,
-    /// The evaluator kind that produced it, e.g. `command`.
-    pub kind: String,
+    /// The typed evaluator category that produced it.
+    pub kind: EvaluatorKind,
+    /// Whether this result participates in the overall evaluation verdict.
+    #[serde(default = "required_by_default")]
+    pub required: bool,
     pub verdict: Verdict,
+    #[serde(default)]
+    pub execution_status: EvaluatorExecutionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,6 +381,69 @@ pub struct CheckResult {
     pub output_path: Option<std::path::PathBuf>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub metrics: Vec<Metric>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+    /// Set only when Forge could not perform the evaluator. A tool that ran
+    /// and reported findings is a normal `Fail`, not an execution error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_error: Option<String>,
+}
+
+fn required_by_default() -> bool {
+    true
+}
+
+impl CheckResult {
+    pub fn execution_error(
+        name: impl Into<String>,
+        kind: EvaluatorKind,
+        required: bool,
+        error: impl Into<String>,
+    ) -> Self {
+        let error = error.into();
+        Self {
+            name: name.into(),
+            kind,
+            required,
+            verdict: Verdict::Inconclusive,
+            execution_status: EvaluatorExecutionStatus::Error,
+            command: None,
+            exit_code: None,
+            duration_ms: 0,
+            detail: Some(error.clone()),
+            output_path: None,
+            metrics: Vec::new(),
+            warnings: Vec::new(),
+            execution_error: Some(error),
+        }
+    }
+}
+
+/// Query-friendly counts over one evaluation. Raw results and metrics remain
+/// canonical; this summary never replaces them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvaluatorSummary {
+    pub evaluator_id: String,
+    pub kind: EvaluatorKind,
+    pub required: bool,
+    pub verdict: Verdict,
+    pub execution_status: EvaluatorExecutionStatus,
+    pub metric_names: Vec<String>,
+}
+
+/// Query-friendly summary over one evaluation. Raw results and metrics remain
+/// canonical; this summary never replaces them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvaluationSummary {
+    pub evaluators: Vec<EvaluatorSummary>,
+    pub evaluator_count: usize,
+    pub required_count: usize,
+    pub optional_count: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub inconclusive: usize,
+    pub execution_errors: usize,
+    pub metric_count: usize,
 }
 
 /// Forge's judgment of one run.
@@ -345,9 +474,17 @@ impl Evaluation {
         started_at: DateTime<Utc>,
         finished_at: DateTime<Utc>,
     ) -> Self {
-        let verdict = if checks.iter().any(|c| c.verdict == Verdict::Fail) {
+        let required = checks
+            .iter()
+            .filter(|check| check.required)
+            .collect::<Vec<_>>();
+        let verdict = if required.iter().any(|check| check.verdict == Verdict::Fail) {
             Verdict::Fail
-        } else if checks.is_empty() || checks.iter().any(|c| c.verdict == Verdict::Inconclusive) {
+        } else if required.is_empty()
+            || required
+                .iter()
+                .any(|check| check.verdict == Verdict::Inconclusive)
+        {
             Verdict::Inconclusive
         } else {
             Verdict::Pass
@@ -378,6 +515,51 @@ impl Evaluation {
     pub fn metric(&self, name: &str) -> Option<&Metric> {
         self.metrics.iter().find(|m| m.name == name)
     }
+
+    pub fn summary(&self) -> EvaluationSummary {
+        EvaluationSummary {
+            evaluators: self
+                .checks
+                .iter()
+                .map(|check| EvaluatorSummary {
+                    evaluator_id: check.name.clone(),
+                    kind: check.kind,
+                    required: check.required,
+                    verdict: check.verdict,
+                    execution_status: check.execution_status,
+                    metric_names: check
+                        .metrics
+                        .iter()
+                        .map(|metric| metric.name.clone())
+                        .collect(),
+                })
+                .collect(),
+            evaluator_count: self.checks.len(),
+            required_count: self.checks.iter().filter(|check| check.required).count(),
+            optional_count: self.checks.iter().filter(|check| !check.required).count(),
+            passed: self
+                .checks
+                .iter()
+                .filter(|check| check.verdict == Verdict::Pass)
+                .count(),
+            failed: self
+                .checks
+                .iter()
+                .filter(|check| check.verdict == Verdict::Fail)
+                .count(),
+            inconclusive: self
+                .checks
+                .iter()
+                .filter(|check| check.verdict == Verdict::Inconclusive)
+                .count(),
+            execution_errors: self
+                .checks
+                .iter()
+                .filter(|check| check.execution_status == EvaluatorExecutionStatus::Error)
+                .count(),
+            metric_count: self.metrics.len(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -387,8 +569,10 @@ mod tests {
     fn check(name: &str, verdict: Verdict) -> CheckResult {
         CheckResult {
             name: name.to_string(),
-            kind: "command".to_string(),
+            kind: EvaluatorKind::Command,
+            required: true,
             verdict,
+            execution_status: EvaluatorExecutionStatus::Completed,
             command: Some("cargo test".to_string()),
             exit_code: Some(0),
             duration_ms: 10,
@@ -400,7 +584,25 @@ mod tests {
                 name,
                 Direction::LowerIsBetter,
             )],
+            warnings: Vec::new(),
+            execution_error: None,
         }
+    }
+
+    #[test]
+    fn optional_checks_do_not_change_the_overall_verdict() {
+        let now = Utc::now();
+        let mut optional = check("security-advisory", Verdict::Fail);
+        optional.required = false;
+        let eval = Evaluation::from_checks(
+            RunId::sequential(1),
+            vec![check("tests", Verdict::Pass), optional],
+            now,
+            now,
+        );
+        assert_eq!(eval.verdict, Verdict::Pass);
+        assert_eq!(eval.summary().optional_count, 1);
+        assert_eq!(eval.summary().failed, 1);
     }
 
     #[test]

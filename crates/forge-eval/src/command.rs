@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use forge_core::result::{CheckResult, Direction, Metric, Verdict};
+use forge_core::result::{
+    CheckResult, Direction, EvaluatorExecutionStatus, EvaluatorKind, Metric, Verdict,
+};
 use forge_core::task::CommandSpec;
 use forge_executor::ExecRequest;
 
@@ -24,13 +26,24 @@ const DETAIL_LINES: usize = 20;
 #[derive(Debug, Clone)]
 pub struct CommandEvaluator {
     name: String,
+    kind: EvaluatorKind,
     spec: CommandSpec,
 }
 
 impl CommandEvaluator {
     pub fn new(name: impl Into<String>, spec: CommandSpec) -> Self {
+        let name = name.into();
+        Self {
+            kind: kind_for_id(&name),
+            name,
+            spec,
+        }
+    }
+
+    pub fn with_kind(name: impl Into<String>, kind: EvaluatorKind, spec: CommandSpec) -> Self {
         Self {
             name: name.into(),
+            kind,
             spec,
         }
     }
@@ -42,12 +55,20 @@ impl CommandEvaluator {
 
 #[async_trait]
 impl Evaluator for CommandEvaluator {
-    fn name(&self) -> &str {
+    fn id(&self) -> &str {
         &self.name
     }
 
-    fn kind(&self) -> &str {
-        "command"
+    fn kind(&self) -> EvaluatorKind {
+        self.kind
+    }
+
+    fn required(&self) -> bool {
+        self.spec.required
+    }
+
+    fn command(&self) -> Option<&str> {
+        Some(&self.spec.command)
     }
 
     async fn evaluate(&self, ctx: &EvalContext<'_>) -> EvalResult<CheckResult> {
@@ -80,9 +101,18 @@ impl Evaluator for CommandEvaluator {
         };
 
         // The full output is the evidence; `detail` is only a summary of it.
-        let output_path = ctx
-            .output_path_for(&self.name)
-            .and_then(|path| write_output(&path, &outcome).ok());
+        let (output_path, warnings) = match ctx.output_path_for(&self.name) {
+            Some(path) => match write_output(&path, &outcome) {
+                Ok(path) => (Some(path), Vec::new()),
+                Err(error) => (
+                    None,
+                    vec![format!(
+                        "could not write evaluator output artifact: {error}"
+                    )],
+                ),
+            },
+            None => (None, Vec::new()),
+        };
 
         let detail = if verdict == Verdict::Pass {
             None
@@ -98,8 +128,10 @@ impl Evaluator for CommandEvaluator {
 
         Ok(CheckResult {
             name: self.name.clone(),
-            kind: self.kind().to_string(),
+            kind: self.kind(),
+            required: self.required(),
             verdict,
+            execution_status: EvaluatorExecutionStatus::Completed,
             command: Some(self.spec.command.clone()),
             exit_code: outcome.exit_code,
             duration_ms: outcome.duration_ms(),
@@ -114,7 +146,21 @@ impl Evaluator for CommandEvaluator {
                 )
                 .with_unit("ms"),
             ],
+            warnings,
+            execution_error: None,
         })
+    }
+}
+
+fn kind_for_id(id: &str) -> EvaluatorKind {
+    match id {
+        "tests" => EvaluatorKind::Test,
+        "benchmark" => EvaluatorKind::Benchmark,
+        "lint" => EvaluatorKind::Lint,
+        "security" => EvaluatorKind::Security,
+        "complexity" => EvaluatorKind::Complexity,
+        "build" => EvaluatorKind::Build,
+        _ => EvaluatorKind::Custom,
     }
 }
 

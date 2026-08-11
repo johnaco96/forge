@@ -48,10 +48,21 @@ pub fn validate(path: PathBuf) -> Result<()> {
             output::section(
                 "Evaluation",
                 output::table(
-                    &["check", "command"],
+                    &["evaluator", "policy", "command"],
                     &checks
                         .iter()
-                        .map(|(name, spec)| vec![name.clone(), spec.command.clone()])
+                        .map(|(name, spec)| {
+                            vec![
+                                name.clone(),
+                                if spec.required {
+                                    "required"
+                                } else {
+                                    "optional"
+                                }
+                                .to_string(),
+                                spec.command.clone(),
+                            ]
+                        })
                         .collect::<Vec<_>>(),
                 )
             )

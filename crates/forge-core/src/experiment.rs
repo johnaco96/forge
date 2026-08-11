@@ -110,6 +110,7 @@ pub enum ComparisonKey {
     Integrity,
     Check { name: String },
     BenchmarkMetric { name: String },
+    EvaluatorMetric { evaluator_id: String, name: String },
     Runtime,
     ProviderReportedTokens,
     Cost,
@@ -125,6 +126,9 @@ impl ComparisonKey {
             Self::Integrity => "Integrity".to_string(),
             Self::Check { name } => format!("Check: {name}"),
             Self::BenchmarkMetric { name } => format!("Benchmark: {name}"),
+            Self::EvaluatorMetric { evaluator_id, name } => {
+                format!("{evaluator_id}: {name}")
+            }
             Self::Runtime => "Agent runtime".to_string(),
             Self::ProviderReportedTokens => "Tokens".to_string(),
             Self::Cost => "Cost".to_string(),
@@ -249,20 +253,25 @@ impl Comparison {
             ));
         }
 
-        let metric_names: BTreeSet<_> = runs
+        let metric_keys: BTreeSet<_> = runs
             .iter()
             .filter_map(|input| input.evaluation)
             .flat_map(|evaluation| evaluation.metrics.iter())
-            .filter(|metric| metric.source == "benchmark" && !metric.name.ends_with(".duration_ms"))
-            .map(|metric| metric.name.clone())
+            .filter(|metric| !metric.name.ends_with(".duration_ms"))
+            .map(|metric| (metric.source.clone(), metric.name.clone()))
             .collect();
-        for name in metric_names {
-            dimensions.push(dimension(
-                ComparisonKey::BenchmarkMetric { name: name.clone() },
-                runs,
-                None,
-                |left, right| compare_metric_pair(left, right, &name),
-            ));
+        for (source, name) in metric_keys {
+            let key = if source == "benchmark" {
+                ComparisonKey::BenchmarkMetric { name: name.clone() }
+            } else {
+                ComparisonKey::EvaluatorMetric {
+                    evaluator_id: source.clone(),
+                    name: name.clone(),
+                }
+            };
+            dimensions.push(dimension(key, runs, None, |left, right| {
+                compare_metric_pair(left, right, &source, &name)
+            }));
         }
 
         dimensions.extend([
@@ -429,11 +438,13 @@ fn compare_verdicts(left: Option<Verdict>, right: Option<Verdict>) -> Comparison
 fn compare_metric_pair(
     left: ComparisonInput<'_>,
     right: ComparisonInput<'_>,
+    source: &str,
     name: &str,
 ) -> PairwiseComparison {
-    let (Some(left_metric), Some(right_metric)) =
-        (benchmark_metric(left, name), benchmark_metric(right, name))
-    else {
+    let (Some(left_metric), Some(right_metric)) = (
+        evaluator_metric(left, source, name),
+        evaluator_metric(right, source, name),
+    ) else {
         return pair(left, right, ComparisonRelation::Missing, None);
     };
     if left_metric.unit != right_metric.unit {
@@ -456,10 +467,17 @@ fn compare_metric_pair(
     pair(left, right, relation, None)
 }
 
-fn benchmark_metric<'a>(input: ComparisonInput<'a>, name: &str) -> Option<&'a Metric> {
-    input
-        .evaluation
-        .and_then(|evaluation| evaluation.metric(name))
+fn evaluator_metric<'a>(
+    input: ComparisonInput<'a>,
+    source: &str,
+    name: &str,
+) -> Option<&'a Metric> {
+    input.evaluation.and_then(|evaluation| {
+        evaluation
+            .metrics
+            .iter()
+            .find(|metric| metric.source == source && metric.name == name)
+    })
 }
 
 fn compare_metrics(left: &Metric, right: &Metric) -> ComparisonRelation {
@@ -609,7 +627,7 @@ mod tests {
 
     use crate::agent::AgentConfig;
     use crate::ids::AgentId;
-    use crate::result::{CheckResult, Metric};
+    use crate::result::{CheckResult, EvaluatorExecutionStatus, EvaluatorKind, Metric};
     use crate::run::{AgentExecution, PatchSummary, Usage};
 
     use super::*;
@@ -671,18 +689,22 @@ mod tests {
             run.run_id.clone(),
             vec![CheckResult {
                 name: "tests".into(),
-                kind: "command".into(),
+                kind: EvaluatorKind::Test,
+                required: true,
                 verdict: if run.outcome == Some(RunOutcome::Passed) {
                     Verdict::Pass
                 } else {
                     Verdict::Fail
                 },
+                execution_status: EvaluatorExecutionStatus::Completed,
                 command: None,
                 exit_code: Some(0),
                 duration_ms: 1,
                 detail: None,
                 output_path: None,
                 metrics,
+                warnings: Vec::new(),
+                execution_error: None,
             }],
             now,
             now,
@@ -814,6 +836,64 @@ mod tests {
                 }
             ),
             ComparisonRelation::NotComparable
+        );
+
+        let wrong_direction = evaluation(
+            &codex,
+            Some(
+                Metric::new("throughput", 4.9, "benchmark", Direction::LowerIsBetter)
+                    .with_unit("GB/s"),
+            ),
+        );
+        let incompatible = Comparison::from_runs(
+            ExperimentId::sequential(3),
+            &[
+                ComparisonInput::new(&claude, Some(&claude_eval)),
+                ComparisonInput::new(&codex, Some(&wrong_direction)),
+            ],
+        );
+        assert_eq!(
+            relation(
+                &incompatible,
+                ComparisonKey::BenchmarkMetric {
+                    name: "throughput".into()
+                }
+            ),
+            ComparisonRelation::NotComparable
+        );
+    }
+
+    #[test]
+    fn non_benchmark_evaluator_metrics_remain_separate_dimensions() {
+        let claude = run(1, "claude", RunOutcome::Passed);
+        let codex = run(2, "codex", RunOutcome::Passed);
+        let metric = |value| {
+            Metric::new(
+                "branch_points",
+                value,
+                "complexity",
+                Direction::LowerIsBetter,
+            )
+            .with_unit("points")
+        };
+        let claude_eval = evaluation(&claude, Some(metric(3.0)));
+        let codex_eval = evaluation(&codex, Some(metric(5.0)));
+        let comparison = Comparison::from_runs(
+            ExperimentId::sequential(1),
+            &[
+                ComparisonInput::new(&claude, Some(&claude_eval)),
+                ComparisonInput::new(&codex, Some(&codex_eval)),
+            ],
+        );
+        assert_eq!(
+            relation(
+                &comparison,
+                ComparisonKey::EvaluatorMetric {
+                    evaluator_id: "complexity".into(),
+                    name: "branch_points".into(),
+                }
+            ),
+            ComparisonRelation::Better
         );
     }
 

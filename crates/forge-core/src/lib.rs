@@ -47,8 +47,9 @@ pub use patch::{
     PatchWarning, WarningKind, WorkspaceDelta,
 };
 pub use result::{
-    BenchmarkMetrics, CheckResult, Dimension, Direction, Evaluation, Metric, MetricName,
-    MetricNameError, MetricValue, Score, ScoreError, Verdict,
+    BenchmarkMetrics, CheckResult, Dimension, Direction, Evaluation, EvaluationSummary,
+    EvaluatorExecutionStatus, EvaluatorKind, EvaluatorSummary, Metric, MetricName, MetricNameError,
+    MetricValue, Score, ScoreError, Verdict,
 };
 pub use run::{
     AgentExecution, AgentExecutionStatus, AgentRun, PatchSummary, RunArtifacts, RunError,

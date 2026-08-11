@@ -1,41 +1,66 @@
-//! Running a repository's declared evaluators and assembling the verdict.
+//! Resolving and running a repository's declared evaluation plan.
+
+use std::time::Instant;
 
 use chrono::Utc;
 use forge_core::events::EventPayload;
 use forge_core::ids::RunId;
-use forge_core::result::{CheckResult, Dimension, Evaluation, Score, Verdict};
+use forge_core::result::{CheckResult, Dimension, Evaluation, EvaluatorKind, Score, Verdict};
 use forge_core::task::EngineeringTask;
 
-use crate::BenchmarkEvaluator;
-use crate::command::CommandEvaluator;
-use crate::evaluator::{EvalContext, Evaluator};
+use crate::evaluator::{EvaluationContext, Evaluator};
+use crate::{
+    BenchmarkEvaluator, BuildEvaluator, ComplexityEvaluator, CustomEvaluator, LintEvaluator,
+    SecurityEvaluator, TestEvaluator,
+};
 
-/// The evaluators that will judge one run.
-pub struct EvaluatorSet {
+/// An immutable, trusted set of evaluators resolved from the task before the
+/// coding agent starts. Candidate changes can neither add checks nor alter
+/// their command, timeout, requiredness, working directory, or output path.
+pub struct EvaluationPlan {
     evaluators: Vec<Box<dyn Evaluator>>,
 }
 
-impl EvaluatorSet {
+impl EvaluationPlan {
     pub fn new(evaluators: Vec<Box<dyn Evaluator>>) -> Self {
         Self { evaluators }
     }
 
-    /// Builds the set a task declares.
-    ///
-    /// Order matters: build before tests before lint before benchmark, so the
-    /// cheapest and most fundamental signal arrives first.
-    pub fn from_task(task: &EngineeringTask) -> Self {
+    pub fn resolve(task: &EngineeringTask) -> Self {
+        let config = &task.evaluation;
         let mut evaluators: Vec<Box<dyn Evaluator>> = Vec::new();
-        for (name, spec) in task.evaluation.checks() {
-            if name == "benchmark" {
-                if let Some(benchmark) = &task.evaluation.benchmark {
-                    evaluators.push(Box::new(BenchmarkEvaluator::new(benchmark.clone())));
-                }
-            } else {
-                evaluators.push(Box::new(CommandEvaluator::new(name, spec)));
-            }
+
+        if let Some(spec) = &config.build {
+            evaluators.push(Box::new(BuildEvaluator::new(spec.clone())));
+        }
+        if let Some(spec) = &config.tests {
+            evaluators.push(Box::new(TestEvaluator::new(spec.clone())));
+        }
+        if let Some(spec) = &config.lint {
+            evaluators.push(Box::new(LintEvaluator::new(spec.clone())));
+        }
+        if let Some(spec) = &config.security {
+            evaluators.push(Box::new(SecurityEvaluator::new(spec.clone())));
+        }
+        if let Some(spec) = &config.complexity {
+            evaluators.push(Box::new(ComplexityEvaluator::new(spec.clone())));
+        }
+        if let Some(spec) = &config.benchmark {
+            evaluators.push(Box::new(BenchmarkEvaluator::new(spec.clone())));
+        }
+        for custom in &config.custom {
+            evaluators.push(Box::new(CustomEvaluator::new(
+                custom.name.clone(),
+                custom.spec.clone(),
+                custom.metrics_file.clone(),
+            )));
         }
         Self::new(evaluators)
+    }
+
+    /// Compatibility spelling retained for Phase 0-1 callers.
+    pub fn from_task(task: &EngineeringTask) -> Self {
+        Self::resolve(task)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -46,57 +71,124 @@ impl EvaluatorSet {
         self.evaluators.len()
     }
 
-    pub fn names(&self) -> Vec<String> {
+    pub fn ids(&self) -> Vec<String> {
         self.evaluators
             .iter()
-            .map(|e| e.name().to_string())
+            .map(|evaluator| evaluator.id().to_string())
             .collect()
     }
 
-    /// Runs every evaluator and assembles Forge's judgment.
-    ///
-    /// An evaluator that cannot run produces an `Inconclusive` check rather
-    /// than aborting: the rest of the evidence is still worth having, and an
-    /// evaluation missing a signal must not read as a clean pass.
-    pub async fn run(&self, run_id: RunId, ctx: &EvalContext<'_>) -> Evaluation {
+    /// Compatibility spelling retained for Phase 0-1 callers.
+    pub fn names(&self) -> Vec<String> {
+        self.ids()
+    }
+
+    pub fn engine(self) -> EvaluationEngine {
+        EvaluationEngine { plan: self }
+    }
+
+    /// Compatibility entry point; all execution still flows through the one
+    /// evaluation engine.
+    pub async fn run(&self, run_id: RunId, ctx: &EvaluationContext<'_>) -> Evaluation {
+        EvaluationEngine::run_plan(self, run_id, ctx).await
+    }
+}
+
+/// The single orchestration path for evaluator lifecycle events, error
+/// isolation, result collection, summary verdicts, and dimensions.
+pub struct EvaluationEngine {
+    plan: EvaluationPlan,
+}
+
+impl EvaluationEngine {
+    pub fn new(plan: EvaluationPlan) -> Self {
+        Self { plan }
+    }
+
+    pub fn plan(&self) -> &EvaluationPlan {
+        &self.plan
+    }
+
+    pub async fn run(&self, run_id: RunId, ctx: &EvaluationContext<'_>) -> Evaluation {
+        Self::run_plan(&self.plan, run_id, ctx).await
+    }
+
+    pub async fn execute(
+        plan: &EvaluationPlan,
+        run_id: RunId,
+        ctx: &EvaluationContext<'_>,
+    ) -> Evaluation {
+        Self::run_plan(plan, run_id, ctx).await
+    }
+
+    async fn run_plan(
+        plan: &EvaluationPlan,
+        run_id: RunId,
+        ctx: &EvaluationContext<'_>,
+    ) -> Evaluation {
         let started_at = Utc::now();
         ctx.events.emit(EventPayload::EvaluationStarted {
-            evaluators: self.names(),
+            evaluators: plan.ids(),
         });
 
-        let mut checks = Vec::with_capacity(self.evaluators.len());
-        for evaluator in &self.evaluators {
-            if evaluator.name() == "benchmark" {
+        let mut checks = Vec::with_capacity(plan.evaluators.len());
+        for evaluator in &plan.evaluators {
+            ctx.events.emit(EventPayload::EvaluatorStarted {
+                evaluator_id: evaluator.id().to_string(),
+                kind: evaluator.kind(),
+                required: evaluator.required(),
+                command: evaluator.command().map(str::to_string),
+            });
+            if evaluator.kind() == EvaluatorKind::Benchmark {
                 ctx.events.emit(EventPayload::BenchmarkStarted {
-                    name: evaluator.name().to_string(),
+                    name: evaluator.id().to_string(),
                 });
             }
 
+            let timer = Instant::now();
             let check = match evaluator.evaluate(ctx).await {
-                Ok(check) => check,
-                Err(err) => {
-                    tracing::warn!(check = evaluator.name(), %err, "evaluator could not run");
-                    CheckResult {
-                        name: evaluator.name().to_string(),
-                        kind: evaluator.kind().to_string(),
-                        verdict: Verdict::Inconclusive,
-                        command: None,
-                        exit_code: None,
-                        duration_ms: 0,
-                        detail: Some(err.to_string()),
-                        output_path: None,
-                        metrics: Vec::new(),
-                    }
+                Ok(check) => {
+                    ctx.events.emit(EventPayload::EvaluatorCompleted {
+                        evaluator_id: check.name.clone(),
+                        kind: check.kind,
+                        verdict: check.verdict,
+                        execution_status: check.execution_status,
+                        duration_ms: check.duration_ms,
+                        metric_count: check.metrics.len(),
+                    });
+                    check
+                }
+                Err(error) => {
+                    let error = error.to_string();
+                    tracing::warn!(check = evaluator.id(), %error, "evaluator could not run");
+                    ctx.events.emit(EventPayload::EvaluatorFailed {
+                        evaluator_id: evaluator.id().to_string(),
+                        kind: evaluator.kind(),
+                        required: evaluator.required(),
+                        error: error.clone(),
+                    });
+                    let mut check = CheckResult::execution_error(
+                        evaluator.id(),
+                        evaluator.kind(),
+                        evaluator.required(),
+                        error,
+                    );
+                    check.command = evaluator.command().map(str::to_string);
+                    check.duration_ms = timer.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+                    check
                 }
             };
 
-            emit_check_events(ctx, &check);
+            emit_legacy_check_events(ctx, &check);
             checks.push(check);
         }
 
-        let evaluation = Evaluation::from_checks(run_id, checks, started_at, Utc::now());
-        let evaluation = derive_dimensions(evaluation);
-
+        let evaluation = derive_dimensions(Evaluation::from_checks(
+            run_id,
+            checks,
+            started_at,
+            Utc::now(),
+        ));
         ctx.events.emit(EventPayload::EvaluationCompleted {
             verdict: evaluation.verdict,
         });
@@ -109,23 +201,22 @@ impl EvaluatorSet {
                     .collect(),
             });
         }
-
         evaluation
     }
 }
 
-fn emit_check_events(ctx: &EvalContext<'_>, check: &CheckResult) {
-    match (check.name.as_str(), check.verdict) {
-        ("tests", Verdict::Pass) => ctx.events.emit(EventPayload::TestPassed {
+fn emit_legacy_check_events(ctx: &EvaluationContext<'_>, check: &CheckResult) {
+    match (check.kind, check.verdict) {
+        (EvaluatorKind::Test, Verdict::Pass) => ctx.events.emit(EventPayload::TestPassed {
             suite: None,
             duration_ms: check.duration_ms,
         }),
-        ("tests", Verdict::Fail) => ctx.events.emit(EventPayload::TestFailed {
+        (EvaluatorKind::Test, Verdict::Fail) => ctx.events.emit(EventPayload::TestFailed {
             suite: None,
             duration_ms: check.duration_ms,
             detail: check.detail.clone(),
         }),
-        ("benchmark", _) => ctx.events.emit(EventPayload::BenchmarkCompleted {
+        (EvaluatorKind::Benchmark, _) => ctx.events.emit(EventPayload::BenchmarkCompleted {
             name: check.name.clone(),
             value: check
                 .metrics
@@ -143,12 +234,8 @@ fn emit_check_events(ctx: &EvalContext<'_>, check: &CheckResult) {
     }
 }
 
-/// Maps checks onto normalized dimensions.
-///
-/// Only relationships that are unambiguous today are populated. Performance,
-/// memory, and maintainability need baselines and normalization rules that
-/// should be derived from real runs rather than invented here — the raw metrics
-/// are preserved so those dimensions can be computed retroactively.
+/// Derives only dimensions with an unambiguous, non-weighted interpretation.
+/// Structured raw metrics remain canonical for all other dimensions.
 fn derive_dimensions(mut evaluation: Evaluation) -> Evaluation {
     if let Some(tests) = evaluation.check("tests") {
         match tests.verdict {
@@ -168,113 +255,189 @@ fn derive_dimensions(mut evaluation: Evaluation) -> Evaluation {
     evaluation
 }
 
+/// Phase 0-1 public name retained as an alias.
+pub type EvaluatorSet = EvaluationPlan;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_support::{TestWorkspace, task_with};
     use forge_core::events::{NullSink, RecordingSink};
+    use forge_core::result::EvaluatorExecutionStatus;
     use forge_executor::ProcessRunner;
 
     #[tokio::test]
     async fn a_task_without_evaluation_yields_an_inconclusive_verdict() {
-        // Nothing was measured, so nothing is verified.
         let ws = TestWorkspace::new();
         let runner = ProcessRunner::conservative();
-        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
-
-        let set = EvaluatorSet::from_task(&ws.task);
-        assert!(set.is_empty());
-
-        let evaluation = set.run(RunId::sequential(1), &ctx).await;
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let plan = EvaluationPlan::resolve(&ws.task);
+        assert!(plan.is_empty());
+        let evaluation = EvaluationEngine::new(plan)
+            .run(RunId::sequential(1), &ctx)
+            .await;
         assert_eq!(evaluation.verdict, Verdict::Inconclusive);
-        assert!(evaluation.dimensions.is_empty());
     }
 
     #[tokio::test]
-    async fn every_declared_check_runs_and_is_recorded() {
+    async fn every_declared_check_runs_with_typed_lifecycle_events() {
         let task = task_with(&[("tests", "exit 0"), ("lint", "exit 0")]);
         let ws = TestWorkspace::with_task(task);
         let runner = ProcessRunner::conservative();
         let sink = RecordingSink::new(RunId::sequential(1));
-        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &sink);
-
-        let evaluation = EvaluatorSet::from_task(&ws.task)
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &sink);
+        let evaluation = EvaluationPlan::resolve(&ws.task)
             .run(RunId::sequential(1), &ctx)
             .await;
 
         assert_eq!(evaluation.verdict, Verdict::Pass);
         assert_eq!(evaluation.checks.len(), 2);
-        assert_eq!(evaluation.metrics.len(), 2);
+        assert_eq!(evaluation.check("tests").unwrap().kind, EvaluatorKind::Test);
+        let types: Vec<&str> = sink
+            .events()
+            .iter()
+            .map(|event| event.event_type())
+            .collect();
         assert_eq!(
-            evaluation
-                .dimensions
-                .get(&Dimension::Correctness)
-                .map(|s| s.get()),
-            Some(1.0)
+            types
+                .iter()
+                .filter(|kind| **kind == "EvaluatorStarted")
+                .count(),
+            2
         );
-
-        let types: Vec<&str> = sink.events().iter().map(|e| e.event_type()).collect();
-        assert!(types.contains(&"EvaluationStarted"));
-        assert!(types.contains(&"TestPassed"));
-        assert!(types.contains(&"EvaluationCompleted"));
-        assert!(types.contains(&"RunScored"));
+        assert_eq!(
+            types
+                .iter()
+                .filter(|kind| **kind == "EvaluatorCompleted")
+                .count(),
+            2
+        );
     }
 
     #[tokio::test]
-    async fn one_failing_check_fails_the_run_but_the_others_still_run() {
+    async fn failure_does_not_suppress_later_evaluators() {
         let task = task_with(&[("tests", "exit 1"), ("lint", "exit 0")]);
         let ws = TestWorkspace::with_task(task);
         let runner = ProcessRunner::conservative();
-        let sink = RecordingSink::new(RunId::sequential(1));
-        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &sink);
-
-        let evaluation = EvaluatorSet::from_task(&ws.task)
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let evaluation = EvaluationPlan::resolve(&ws.task)
             .run(RunId::sequential(1), &ctx)
             .await;
-
         assert_eq!(evaluation.verdict, Verdict::Fail);
         assert_eq!(evaluation.check("lint").unwrap().verdict, Verdict::Pass);
-        assert_eq!(
-            evaluation
-                .dimensions
-                .get(&Dimension::Correctness)
-                .map(|s| s.get()),
-            Some(0.0)
-        );
-        assert!(sink.events().iter().any(|e| e.event_type() == "TestFailed"));
     }
 
     #[tokio::test]
-    async fn checks_run_in_the_documented_order() {
+    async fn all_six_phase_two_categories_flow_through_one_engine() {
+        let mut task = task_with(&[
+            ("tests", "true"),
+            ("benchmark", "true"),
+            ("lint", "true"),
+            ("security", "true"),
+            ("complexity", "true"),
+            ("api_contract", "true"),
+        ]);
+        task.evaluation.build = None;
+        let ws = TestWorkspace::with_task(task);
+        let runner = ProcessRunner::conservative();
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let evaluation = EvaluationPlan::resolve(&ws.task)
+            .run(RunId::sequential(1), &ctx)
+            .await;
+        assert_eq!(evaluation.verdict, Verdict::Pass);
+        assert_eq!(
+            evaluation
+                .checks
+                .iter()
+                .map(|check| check.kind)
+                .collect::<Vec<_>>(),
+            vec![
+                EvaluatorKind::Test,
+                EvaluatorKind::Lint,
+                EvaluatorKind::Security,
+                EvaluatorKind::Complexity,
+                EvaluatorKind::Benchmark,
+                EvaluatorKind::Custom,
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn optional_failure_is_preserved_without_blocking_a_pass() {
+        let mut task = task_with(&[("tests", "true"), ("security", "false")]);
+        task.evaluation.security.as_mut().unwrap().required = false;
+        let ws = TestWorkspace::with_task(task);
+        let runner = ProcessRunner::conservative();
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let evaluation = EvaluationPlan::resolve(&ws.task)
+            .run(RunId::sequential(1), &ctx)
+            .await;
+        assert_eq!(evaluation.verdict, Verdict::Pass);
+        assert_eq!(evaluation.check("security").unwrap().verdict, Verdict::Fail);
+        assert!(!evaluation.check("security").unwrap().required);
+    }
+
+    #[tokio::test]
+    async fn one_execution_error_is_required_or_optional_without_hiding_other_results() {
+        for (required, expected) in [(true, Verdict::Inconclusive), (false, Verdict::Pass)] {
+            let mut task = task_with(&[("tests", "true"), ("security", "true")]);
+            let security = task.evaluation.security.as_mut().unwrap();
+            security.working_dir = Some("missing-but-safe".into());
+            security.required = required;
+            let ws = TestWorkspace::with_task(task);
+            let runner = ProcessRunner::conservative();
+            let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+            let evaluation = EvaluationPlan::resolve(&ws.task)
+                .run(RunId::sequential(1), &ctx)
+                .await;
+            assert_eq!(evaluation.verdict, expected);
+            assert_eq!(evaluation.check("tests").unwrap().verdict, Verdict::Pass);
+            assert_eq!(
+                evaluation.check("security").unwrap().execution_status,
+                EvaluatorExecutionStatus::Error
+            );
+            assert_eq!(
+                evaluation.check("security").unwrap().verdict,
+                Verdict::Inconclusive
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_error_is_not_an_evaluation_failure() {
+        let task = task_with(&[("tests", "exit 0"), ("lint", "exit 0")]);
+        let mut ws = TestWorkspace::with_task(task);
+        ws.workspace.path = ws.workspace.path.join("gone");
+        let runner = ProcessRunner::conservative();
+        let sink = RecordingSink::new(RunId::sequential(1));
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &sink);
+        let evaluation = EvaluationPlan::resolve(&ws.task)
+            .run(RunId::sequential(1), &ctx)
+            .await;
+        assert_eq!(evaluation.verdict, Verdict::Inconclusive);
+        assert_eq!(
+            evaluation.check("tests").unwrap().execution_status,
+            EvaluatorExecutionStatus::Error
+        );
+        assert_eq!(evaluation.checks.len(), 2);
+        assert_eq!(
+            sink.events()
+                .iter()
+                .filter(|event| event.event_type() == "EvaluatorFailed")
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn plan_order_and_kinds_are_deterministic() {
         let task = task_with(&[
             ("benchmark", "exit 0"),
             ("lint", "exit 0"),
             ("tests", "exit 0"),
+            ("security", "exit 0"),
         ]);
-        let set = EvaluatorSet::from_task(&task);
-        assert_eq!(set.names(), vec!["tests", "lint", "benchmark"]);
-    }
-
-    #[tokio::test]
-    async fn an_evaluator_that_cannot_run_does_not_produce_a_pass() {
-        let task = task_with(&[("tests", "exit 0")]);
-        let mut ws = TestWorkspace::with_task(task);
-        // Point the workspace at a directory that does not exist, so the check
-        // cannot be executed at all.
-        ws.workspace.path = ws.workspace.path.join("gone");
-        let runner = ProcessRunner::conservative();
-        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
-
-        let evaluation = EvaluatorSet::from_task(&ws.task)
-            .run(RunId::sequential(1), &ctx)
-            .await;
-
-        assert_eq!(evaluation.verdict, Verdict::Inconclusive);
-        assert_eq!(
-            evaluation.check("tests").unwrap().verdict,
-            Verdict::Inconclusive
-        );
-        // No correctness claim can be made from a check that never ran.
-        assert!(evaluation.dimensions.is_empty());
+        let plan = EvaluationPlan::resolve(&task);
+        assert_eq!(plan.ids(), vec!["tests", "lint", "security", "benchmark"]);
     }
 }

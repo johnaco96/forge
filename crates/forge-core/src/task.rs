@@ -4,13 +4,13 @@
 //! objective for the agent, machine-readable constraints, and machine-readable
 //! evaluation instructions that Forge — not the agent — executes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::TaskId;
+use crate::ids::{TaskId, validate_id};
 use crate::integrity::ProtectionPolicy;
 
 #[derive(Debug, thiserror::Error)]
@@ -58,6 +58,10 @@ pub struct CommandSpec {
     /// Directory to run in, relative to the workspace root.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_dir: Option<String>,
+    /// Required evaluators participate in the overall verdict. The default is
+    /// deliberately conservative and preserves the Phase 0-1 behavior.
+    #[serde(skip_serializing_if = "is_true")]
+    pub required: bool,
 }
 
 impl CommandSpec {
@@ -66,6 +70,7 @@ impl CommandSpec {
             command: command.into(),
             timeout_secs: None,
             working_dir: None,
+            required: true,
         }
     }
 }
@@ -84,6 +89,8 @@ pub struct BenchmarkSpec {
     pub working_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metrics_file: Option<String>,
+    #[serde(skip_serializing_if = "is_true")]
+    pub required: bool,
 }
 
 impl BenchmarkSpec {
@@ -93,6 +100,7 @@ impl BenchmarkSpec {
             timeout_secs: None,
             working_dir: None,
             metrics_file: None,
+            required: true,
         }
     }
 
@@ -106,6 +114,7 @@ impl BenchmarkSpec {
             command: self.command.clone(),
             timeout_secs: self.timeout_secs,
             working_dir: self.working_dir.clone(),
+            required: self.required,
         }
     }
 }
@@ -117,6 +126,7 @@ impl From<CommandSpec> for BenchmarkSpec {
             timeout_secs: spec.timeout_secs,
             working_dir: spec.working_dir,
             metrics_file: None,
+            required: spec.required,
         }
     }
 }
@@ -157,6 +167,7 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
         let mut timeout_secs: Option<u64> = None;
         let mut working_dir: Option<String> = None;
         let mut metrics_file: Option<String> = None;
+        let mut required: Option<bool> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
@@ -164,10 +175,11 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
                 "timeout_secs" => timeout_secs = Some(map.next_value()?),
                 "working_dir" => working_dir = Some(map.next_value()?),
                 "metrics_file" => metrics_file = Some(map.next_value()?),
+                "required" => required = Some(map.next_value()?),
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown key `{other}`; expected `command`, `timeout_secs`, `working_dir`, \
-                         or `metrics_file`"
+                         `metrics_file`, or `required`"
                     )));
                 }
             }
@@ -178,6 +190,7 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
             timeout_secs,
             working_dir,
             metrics_file,
+            required: required.unwrap_or(true),
         })
     }
 }
@@ -258,16 +271,18 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
         let mut command: Option<String> = None;
         let mut timeout_secs: Option<u64> = None;
         let mut working_dir: Option<String> = None;
+        let mut required: Option<bool> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
                 "command" => command = Some(map.next_value()?),
                 "timeout_secs" => timeout_secs = Some(map.next_value()?),
                 "working_dir" => working_dir = Some(map.next_value()?),
+                "required" => required = Some(map.next_value()?),
                 other => {
                     return Err(serde::de::Error::custom(format!(
-                        "unknown key `{other}`; expected `command`, `timeout_secs`, or \
-                         `working_dir`"
+                        "unknown key `{other}`; expected `command`, `timeout_secs`, \
+                         `working_dir`, or `required`"
                     )));
                 }
             }
@@ -277,6 +292,7 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
             command: command.ok_or_else(|| serde::de::Error::custom("missing `command`"))?,
             timeout_secs,
             working_dir,
+            required: required.unwrap_or(true),
         })
     }
 }
@@ -284,9 +300,14 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
 /// A repository-defined evaluation step beyond the well-known ones.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NamedCommand {
+    #[serde(rename = "id", alias = "name")]
     pub name: String,
     #[serde(flatten)]
     pub spec: CommandSpec,
+    /// Optional structured metrics using the same schema and trust rules as a
+    /// benchmark result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metrics_file: Option<String>,
 }
 
 /// How Forge independently judges a change.
@@ -315,6 +336,10 @@ pub struct EvaluationSpec {
         skip_serializing_if = "Option::is_none"
     )]
     pub lint: Option<CommandSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<CommandSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub complexity: Option<BenchmarkSpec>,
     #[serde(
         default,
         alias = "build_command",
@@ -327,17 +352,22 @@ pub struct EvaluationSpec {
 
 impl EvaluationSpec {
     /// Returns every configured check as `(kind, spec)` pairs, in the order
-    /// Forge should run them: build, tests, lint, benchmark, then custom.
+    /// Forge should run them: build, tests, lint, security, complexity,
+    /// benchmark, then custom.
     pub fn checks(&self) -> Vec<(String, CommandSpec)> {
         let mut out = Vec::new();
         for (kind, spec) in [
             ("build", self.build.clone()),
             ("tests", self.tests.clone()),
             ("lint", self.lint.clone()),
+            ("security", self.security.clone()),
         ] {
             if let Some(spec) = spec {
                 out.push((kind.to_string(), spec));
             }
+        }
+        if let Some(complexity) = &self.complexity {
+            out.push(("complexity".to_string(), complexity.command_spec()));
         }
         if let Some(benchmark) = &self.benchmark {
             out.push(("benchmark".to_string(), benchmark.command_spec()));
@@ -346,6 +376,21 @@ impl EvaluationSpec {
             out.push((custom.name.clone(), custom.spec.clone()));
         }
         out
+    }
+
+    /// Every candidate-controlled structured output that must be excluded from
+    /// the candidate patch and cleared before its evaluator command runs.
+    pub fn metrics_files(&self) -> Vec<&str> {
+        self.benchmark
+            .iter()
+            .chain(self.complexity.iter())
+            .filter_map(|spec| spec.metrics_file.as_deref())
+            .chain(
+                self.custom
+                    .iter()
+                    .filter_map(|spec| spec.metrics_file.as_deref()),
+            )
+            .collect()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -453,11 +498,54 @@ impl EngineeringTask {
                 })?;
             }
         }
-        if let Some(benchmark) = &self.evaluation.benchmark
-            && let Some(metrics_file) = &benchmark.metrics_file
+        for (kind, metrics_file) in self
+            .evaluation
+            .benchmark
+            .iter()
+            .filter_map(|spec| spec.metrics_file.as_deref().map(|path| ("benchmark", path)))
+            .chain(self.evaluation.complexity.iter().filter_map(|spec| {
+                spec.metrics_file
+                    .as_deref()
+                    .map(|path| ("complexity", path))
+            }))
+            .chain(self.evaluation.custom.iter().filter_map(|spec| {
+                spec.metrics_file
+                    .as_deref()
+                    .map(|path| (spec.name.as_str(), path))
+            }))
         {
             validate_repository_relative(metrics_file)
-                .map_err(|reason| invalid(&format!("benchmark metrics file {reason}")))?;
+                .map_err(|reason| invalid(&format!("evaluation `{kind}` metrics file {reason}")))?;
+        }
+
+        let built_in_ids = [
+            "build",
+            "tests",
+            "lint",
+            "security",
+            "complexity",
+            "benchmark",
+        ];
+        let mut custom_ids = BTreeSet::new();
+        for custom in &self.evaluation.custom {
+            validate_id(&custom.name).map_err(|error| {
+                invalid(&format!(
+                    "custom evaluator id `{}` is invalid: {error}",
+                    custom.name
+                ))
+            })?;
+            if built_in_ids.contains(&custom.name.as_str()) {
+                return Err(invalid(&format!(
+                    "custom evaluator id `{}` collides with a built-in evaluator",
+                    custom.name
+                )));
+            }
+            if !custom_ids.insert(custom.name.as_str()) {
+                return Err(invalid(&format!(
+                    "custom evaluator id `{}` is duplicated",
+                    custom.name
+                )));
+            }
         }
         self.protection
             .validate()
@@ -496,6 +584,10 @@ impl EngineeringTask {
         }
         warnings
     }
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
 }
 
 fn validate_repository_relative(path: &str) -> Result<(), String> {
@@ -765,5 +857,104 @@ evaluation:
         let hostile = valid.replace(".forge-metrics.json", "../../outside.json");
         let task: EngineeringTask = serde_yaml_ng::from_str(&hostile).unwrap();
         assert!(task.validate().is_err());
+    }
+
+    #[test]
+    fn phase_two_evaluators_parse_with_requiredness_and_structured_outputs() {
+        let raw = r#"
+task_id: T-0020
+repository: r
+objective: Measure several independent engineering qualities
+evaluation:
+  tests: cargo test
+  security:
+    command: ./scripts/security.sh
+    required: false
+  complexity:
+    command: ./scripts/complexity.sh
+    metrics_file: metrics/complexity.json
+  custom:
+    - id: api_contract
+      command: ./scripts/api-contract.sh
+    - id: source_stats
+      command: ./scripts/source-stats.sh
+      metrics_file: metrics/source-stats.json
+      required: false
+"#;
+        let task: EngineeringTask = serde_yaml_ng::from_str(raw).unwrap();
+        task.validate().unwrap();
+        assert!(!task.evaluation.security.as_ref().unwrap().required);
+        assert_eq!(
+            task.evaluation
+                .complexity
+                .as_ref()
+                .unwrap()
+                .metrics_file
+                .as_deref(),
+            Some("metrics/complexity.json")
+        );
+        assert_eq!(task.evaluation.custom[0].name, "api_contract");
+        assert_eq!(
+            task.evaluation.custom[1].metrics_file.as_deref(),
+            Some("metrics/source-stats.json")
+        );
+        assert!(!task.evaluation.custom[1].spec.required);
+        assert_eq!(task.evaluation.metrics_files().len(), 2);
+    }
+
+    #[test]
+    fn old_custom_name_and_implicit_requiredness_remain_compatible() {
+        let raw = r#"
+task_id: T-0021
+repository: r
+objective: Preserve the earlier custom evaluator spelling
+evaluation:
+  custom:
+    - name: smoke
+      command: ./smoke.sh
+"#;
+        let task: EngineeringTask = serde_yaml_ng::from_str(raw).unwrap();
+        task.validate().unwrap();
+        assert_eq!(task.evaluation.custom[0].name, "smoke");
+        assert!(task.evaluation.custom[0].spec.required);
+    }
+
+    #[test]
+    fn custom_evaluator_ids_are_unique_safe_and_do_not_shadow_built_ins() {
+        let task = |custom: &str| {
+            serde_yaml_ng::from_str::<EngineeringTask>(&format!(
+                "task_id: T-22\nrepository: r\nobjective: Validate evaluator ids\nevaluation:\n  custom:\n{custom}"
+            ))
+            .unwrap()
+        };
+
+        let duplicate = task(
+            "    - id: audit\n      command: 'true'\n    - id: audit\n      command: 'true'\n",
+        );
+        assert!(
+            duplicate
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("duplicated")
+        );
+
+        let collision = task("    - id: tests\n      command: 'true'\n");
+        assert!(
+            collision
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("collides")
+        );
+
+        let unsafe_id = task("    - id: ../audit\n      command: 'true'\n");
+        assert!(
+            unsafe_id
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("invalid")
+        );
     }
 }

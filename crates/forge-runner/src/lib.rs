@@ -52,7 +52,7 @@ use forge_core::run::{AgentExecution, AgentRun, PatchSummary, RunOutcome, RunSta
 use forge_core::security::SecurityPosture;
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
-use forge_eval::{EvalContext, EvaluatorSet};
+use forge_eval::{EvalContext, EvaluationEngine, EvaluationPlan};
 use forge_executor::{
     EnvPolicy, ProcessRunner, WorkspaceProvider, WorktreeProvider, capture_candidate_patch,
 };
@@ -176,6 +176,14 @@ pub struct Runner {
     layout: Layout,
     config: ForgeConfig,
     store: Store,
+}
+
+struct PipelineInputs<'a> {
+    artifacts_dir: &'a Path,
+    sink: &'a RecordingSink,
+    adapter: &'a dyn AgentAdapter,
+    evaluation_plan: &'a EvaluationPlan,
+    experiment_id: Option<&'a ExperimentId>,
 }
 
 impl Runner {
@@ -403,6 +411,9 @@ impl Runner {
         base_was_dirty: bool,
     ) -> RunnerResult<RunReport> {
         let agent_config = self.agent_config(&request)?;
+        // Resolve trusted evaluation configuration before any candidate code
+        // executes. The resulting plan is never rebuilt from the workspace.
+        let evaluation_plan = EvaluationPlan::resolve(&request.task);
         let run_id = self.store.next_run_id().await?;
 
         // --- From here on, every path persists a run. ---
@@ -438,16 +449,14 @@ impl Runner {
             .keep_workspace
             .unwrap_or(self.config.workspaces.keep_after_run);
 
-        let result = self
-            .run_inner(
-                &request,
-                &mut run,
-                &artifacts_dir,
-                &sink,
-                adapter,
-                experiment_id,
-            )
-            .await;
+        let inputs = PipelineInputs {
+            artifacts_dir: &artifacts_dir,
+            sink: &sink,
+            adapter,
+            evaluation_plan: &evaluation_plan,
+            experiment_id,
+        };
+        let result = self.run_inner(&request, &mut run, &inputs).await;
 
         let (evaluation, workspace) = match result {
             Ok(outcome) => outcome,
@@ -502,22 +511,19 @@ impl Runner {
         &self,
         request: &RunRequest,
         run: &mut AgentRun,
-        artifacts_dir: &Path,
-        sink: &RecordingSink,
-        adapter: &dyn AgentAdapter,
-        experiment_id: Option<&ExperimentId>,
+        inputs: &PipelineInputs<'_>,
     ) -> RunnerResult<(Option<Evaluation>, Option<Workspace>)> {
         // 1. Isolated workspace.
         run.transition_to(RunStatus::Preparing)?;
         let provider = self.provider(true)?;
-        let workspace = provider.provision(&run.run_id, &run.base_commit, sink)?;
+        let workspace = provider.provision(&run.run_id, &run.base_commit, inputs.sink)?;
         run.workspace_path = Some(workspace.path.clone());
         run.branch = Some(workspace.branch.clone());
-        self.store.save_run(run, experiment_id).await?;
+        self.store.save_run(run, inputs.experiment_id).await?;
 
         // 2. The agent. Untrusted from here until the patch is read back.
         run.transition_to(RunStatus::Running)?;
-        self.store.save_run(run, experiment_id).await?;
+        self.store.save_run(run, inputs.experiment_id).await?;
 
         let timeout = request
             .timeout
@@ -527,12 +533,12 @@ impl Runner {
             &request.task,
             &workspace,
             &run.agent,
-            sink,
-            artifacts_dir.to_path_buf(),
+            inputs.sink,
+            inputs.artifacts_dir.to_path_buf(),
         )
         .with_timeout(timeout);
 
-        match adapter.execute(&ctx).await {
+        match inputs.adapter.execute(&ctx).await {
             Ok(execution) => run.execution = Some(execution),
             Err(err) => {
                 // The agent could not be run. Record it and stop; there is
@@ -544,24 +550,36 @@ impl Runner {
         }
 
         // 3. Read the change out of Git. Everything below this line is measured.
-        let (patch, integrity, warnings) =
-            self.capture(&workspace, &request.task, run, artifacts_dir, sink)?;
+        let (patch, integrity, warnings) = self.capture(
+            &workspace,
+            &request.task,
+            run,
+            inputs.artifacts_dir,
+            inputs.sink,
+        )?;
         run.patch = Some(patch);
         run.integrity = Some(integrity);
         run.warnings = warnings;
 
         // 4. Forge's own evaluation.
         run.transition_to(RunStatus::Evaluating)?;
-        self.store.save_run(run, experiment_id).await?;
+        self.store.save_run(run, inputs.experiment_id).await?;
 
         let evaluation = self
-            .evaluate(&request.task, &workspace, run, artifacts_dir, sink)
+            .evaluate(
+                &request.task,
+                inputs.evaluation_plan,
+                &workspace,
+                run,
+                inputs.artifacts_dir,
+                inputs.sink,
+            )
             .await;
         run.evaluation_verdict = evaluation.as_ref().map(|e| e.verdict);
 
         // 5. Conclude.
         let outcome = run.finalize_outcome();
-        sink.emit(EventPayload::RunCompleted {
+        inputs.sink.emit(EventPayload::RunCompleted {
             outcome,
             duration_ms: run
                 .total_duration()
@@ -585,12 +603,7 @@ impl Runner {
         let diff_path = artifacts_dir.join("patch.diff");
         let message = format!("forge {}: {}", run.run_id, run.task_id);
         let mut policy = PatchPolicy::default();
-        if let Some(metrics_file) = task
-            .evaluation
-            .benchmark
-            .as_ref()
-            .and_then(|benchmark| benchmark.metrics_file.as_ref())
-        {
+        for metrics_file in task.evaluation.metrics_files() {
             policy = policy.with_excluded_path(metrics_file);
         }
         let captured =
@@ -617,13 +630,13 @@ impl Runner {
     async fn evaluate(
         &self,
         task: &EngineeringTask,
+        evaluation_plan: &EvaluationPlan,
         workspace: &Workspace,
         run: &AgentRun,
         artifacts_dir: &Path,
         sink: &RecordingSink,
     ) -> Option<Evaluation> {
-        let evaluators = EvaluatorSet::from_task(task);
-        if evaluators.is_empty() {
+        if evaluation_plan.is_empty() {
             return None;
         }
 
@@ -631,10 +644,15 @@ impl Runner {
         // an agent just wrote, and have no business seeing credentials.
         let runner = ProcessRunner::new(EnvPolicy::conservative());
         let ctx = EvalContext::new(workspace, task, &runner, sink)
+            .with_patch(
+                run.patch
+                    .as_ref()
+                    .expect("patch captured before evaluation"),
+            )
             .with_default_timeout(Some(Duration::from_secs(self.config.defaults.timeout_secs)))
             .with_artifacts_dir(artifacts_dir);
 
-        Some(evaluators.run(run.run_id.clone(), &ctx).await)
+        Some(EvaluationEngine::execute(evaluation_plan, run.run_id.clone(), &ctx).await)
     }
 
     fn provider(&self, keep: bool) -> RunnerResult<WorktreeProvider> {
