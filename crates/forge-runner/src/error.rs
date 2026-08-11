@@ -20,6 +20,12 @@ pub enum RunnerError {
     #[error("invalid agent id: {0}")]
     InvalidAgentId(String),
 
+    #[error("competitive execution requires at least two agents")]
+    TooFewCompetitors,
+
+    #[error("competitive execution contains duplicate agent `{0}`")]
+    DuplicateCompetitor(String),
+
     #[error(transparent)]
     Agent(#[from] forge_agent::AgentError),
 

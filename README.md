@@ -20,9 +20,9 @@ See [`forge_project_plan.md`](forge_project_plan.md) for the full design.
 
 ## Status
 
-One complete vertical slice works end to end: Forge can run a real engineering
-task through Claude Code in an isolated worktree, evaluate the result itself,
-and record everything.
+Forge can run a real engineering task through Claude Code or Codex in isolated
+worktrees, evaluate each result itself, and group independent attempts from one
+base commit into a comparative experiment.
 
 | Capability | State |
 |---|---|
@@ -37,7 +37,7 @@ and record everything.
 | Protected evaluation inputs, candidate patch policy, security posture | ✅ |
 | Structured benchmark metric contract | ✅ |
 | **Codex adapter and `forge run --agent codex`** | ✅ |
-| `forge compete` | ⬜ after architectural review |
+| **`forge compete task.yaml --agents claude,codex`** | ✅ Phase 1B review candidate |
 | History queries, learned routing, multi-agent | ⬜ later |
 
 ---
@@ -71,6 +71,18 @@ forge run .forge/tasks/my-task.yaml --agent codex
 
 `forge agent list` shows which agents Forge can actually run, and
 `forge task validate <file>` checks a task before you spend a run on it.
+
+To run independent attempts from one resolved base and compare their evidence
+without choosing an overall winner:
+
+```bash
+forge compete .forge/tasks/my-task.yaml --agents claude,codex
+```
+
+Competition is sequential in Phase 1B. Each participant is an ordinary Forge
+run with its own worktree, patch, evaluation, and trajectory. The experiment
+stores their shared base and run links, then reports pairwise dimensional
+relationships. One failed or timed-out participant does not erase the others.
 
 ### Exit codes
 
@@ -420,6 +432,12 @@ The same controlled fixture can be run with Codex:
 
 ```bash
 forge run task.yaml --agent codex
+```
+
+Or as one controlled infrastructure experiment from an identical base:
+
+```bash
+forge compete task.yaml --agents claude,codex
 ```
 
 The fixture ships failing tests and an unimplemented function, so a `PASS`

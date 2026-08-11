@@ -33,6 +33,7 @@
 
 #![deny(rust_2018_idioms)]
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -40,7 +41,10 @@ use forge_agent::adapter::{AgentAdapter, RunContext};
 use forge_core::agent::AgentConfig;
 use forge_core::config::{ForgeConfig, Layout};
 use forge_core::events::{EventPayload, EventSink, RecordingSink};
-use forge_core::ids::AgentId;
+use forge_core::experiment::{
+    Comparison, ComparisonInput, Experiment, ExperimentEventPayload, ExperimentRecordingSink,
+};
+use forge_core::ids::{AgentId, ExperimentId};
 use forge_core::integrity::EvaluationIntegrity;
 use forge_core::patch::{PatchPolicy, PatchWarning};
 use forge_core::result::{Evaluation, Verdict};
@@ -70,6 +74,57 @@ pub struct RunRequest {
     pub timeout: Option<Duration>,
     /// Overrides `workspaces.keep_after_run`.
     pub keep_workspace: Option<bool>,
+}
+
+/// A base commit resolved by Forge before execution begins.
+///
+/// The inner hash is private so callers cannot accidentally label an arbitrary
+/// revision as resolved. Experiments pass one instance to every participant
+/// and never re-read `HEAD` between runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedBaseCommit(String);
+
+impl ResolvedBaseCommit {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What to execute as one competitive experiment.
+#[derive(Debug, Clone)]
+pub struct ExperimentRequest {
+    pub task: EngineeringTask,
+    /// Revision resolved once before the experiment is persisted. Defaults to
+    /// `HEAD`.
+    pub base_rev: Option<String>,
+    pub timeout: Option<Duration>,
+    pub keep_workspace: Option<bool>,
+}
+
+impl ExperimentRequest {
+    pub fn new(task: EngineeringTask) -> Self {
+        Self {
+            task,
+            base_rev: None,
+            timeout: None,
+            keep_workspace: None,
+        }
+    }
+}
+
+/// One requested participant and its provider-specific adapter.
+pub struct Competitor<'a> {
+    pub agent_id: String,
+    pub adapter: &'a dyn AgentAdapter,
+}
+
+impl<'a> Competitor<'a> {
+    pub fn new(agent_id: impl Into<String>, adapter: &'a dyn AgentAdapter) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            adapter,
+        }
+    }
 }
 
 impl RunRequest {
@@ -106,6 +161,15 @@ impl RunReport {
     }
 }
 
+/// A completed experiment and the ordinary run reports it groups.
+#[derive(Debug, Clone)]
+pub struct ExperimentReport {
+    pub experiment: Experiment,
+    pub runs: Vec<RunReport>,
+    pub experiment_events_recorded: usize,
+    pub execution_strategy: &'static str,
+}
+
 /// Drives runs against one repository.
 pub struct Runner {
     repository: Repository,
@@ -135,6 +199,14 @@ impl Runner {
 
     pub fn store(&self) -> &Store {
         &self.store
+    }
+
+    /// Resolves a revision once into the immutable commit every participant
+    /// must share.
+    pub fn resolve_base(&self, revision: Option<&str>) -> RunnerResult<ResolvedBaseCommit> {
+        Ok(ResolvedBaseCommit(
+            self.repository.resolve(revision.unwrap_or("HEAD"))?,
+        ))
     }
 
     /// Builds the agent configuration a run will be recorded under.
@@ -172,23 +244,164 @@ impl Runner {
         adapter: &dyn AgentAdapter,
     ) -> RunnerResult<RunReport> {
         // --- Before a run exists: failures here are errors, not records. ---
+        self.validate_task(&request.task)?;
+        // Checked before provisioning so a misconfigured agent costs nothing.
+        adapter.prepare().await?;
+        let base_commit = self.resolve_base(request.base_rev.as_deref())?;
+        let base_was_dirty = !self.repository.is_clean().unwrap_or(true);
 
-        request.task.validate()?;
+        self.execute_resolved(request, adapter, &base_commit, None, None, base_was_dirty)
+            .await
+    }
 
-        if request.task.repository != self.config.repository.name {
+    /// Runs independent participants sequentially through the ordinary run
+    /// pipeline. Adapters are all preflighted and the base is resolved once
+    /// before the experiment record exists, so a bad configuration cannot
+    /// create a half-started competition.
+    pub async fn compete(
+        &self,
+        request: ExperimentRequest,
+        competitors: Vec<Competitor<'_>>,
+    ) -> RunnerResult<ExperimentReport> {
+        self.validate_task(&request.task)?;
+        if competitors.len() < 2 {
+            return Err(RunnerError::TooFewCompetitors);
+        }
+        let mut seen = HashSet::new();
+        for competitor in &competitors {
+            if !seen.insert(competitor.agent_id.clone()) {
+                return Err(RunnerError::DuplicateCompetitor(
+                    competitor.agent_id.clone(),
+                ));
+            }
+        }
+
+        // Resolve the shared repository state before any adapter can execute.
+        let base_commit = self.resolve_base(request.base_rev.as_deref())?;
+        let base_was_dirty = !self.repository.is_clean().unwrap_or(true);
+
+        // A missing executable is configuration evidence, not an engineering
+        // result. Preflight every participant before creating the experiment.
+        for competitor in &competitors {
+            competitor.adapter.prepare().await?;
+        }
+
+        self.store.upsert_task(&request.task).await?;
+        let experiment_id = self.store.next_experiment_id().await?;
+        let agents = competitors
+            .iter()
+            .map(|competitor| competitor.agent_id.clone())
+            .collect::<Vec<_>>();
+        let mut experiment = Experiment::new(
+            experiment_id.clone(),
+            request.task.task_id.clone(),
+            request.task.repository.clone(),
+            base_commit.as_str(),
+            agents.clone(),
+        );
+        let experiment_sink = ExperimentRecordingSink::new(experiment_id.clone());
+        experiment_sink.emit(ExperimentEventPayload::ExperimentStarted {
+            task_id: request.task.task_id.clone(),
+            repository: request.task.repository.clone(),
+            base_commit: base_commit.as_str().to_string(),
+            agents,
+        });
+        self.store.save_experiment(&experiment).await?;
+        self.store
+            .append_experiment_events(&experiment_sink.events())
+            .await?;
+
+        let mut reports = Vec::with_capacity(competitors.len());
+        for competitor in competitors {
+            let mut run_request = RunRequest::new(request.task.clone(), &competitor.agent_id);
+            run_request.timeout = request.timeout;
+            run_request.keep_workspace = request.keep_workspace;
+
+            let result = self
+                .execute_resolved(
+                    run_request,
+                    competitor.adapter,
+                    &base_commit,
+                    Some(&experiment_id),
+                    Some(&experiment_sink),
+                    base_was_dirty,
+                )
+                .await;
+            let report = match result {
+                Ok(report) => report,
+                Err(error) => {
+                    experiment.fail(error.to_string());
+                    experiment_sink.emit(ExperimentEventPayload::ExperimentFailed {
+                        reason: error.to_string(),
+                    });
+                    // The original infrastructure error remains primary. These
+                    // best-effort writes preserve as much partial evidence as
+                    // the ledger still accepts.
+                    let _ = self.store.save_experiment(&experiment).await;
+                    let _ = self
+                        .store
+                        .append_experiment_events(&experiment_sink.events())
+                        .await;
+                    return Err(error);
+                }
+            };
+
+            experiment.record_run(report.run.run_id.clone());
+            experiment_sink.emit(ExperimentEventPayload::ParticipantRunCompleted {
+                run_id: report.run.run_id.clone(),
+                agent_id: competitor.agent_id,
+                outcome: report.outcome(),
+            });
+            reports.push(report);
+            self.store.save_experiment(&experiment).await?;
+            self.store
+                .append_experiment_events(&experiment_sink.events())
+                .await?;
+        }
+
+        let comparison_inputs = reports
+            .iter()
+            .map(|report| ComparisonInput::new(&report.run, report.evaluation.as_ref()))
+            .collect::<Vec<_>>();
+        let comparison = Comparison::from_runs(experiment_id, &comparison_inputs);
+        experiment.complete(comparison);
+        experiment_sink.emit(ExperimentEventPayload::ExperimentCompleted {
+            run_count: reports.len(),
+        });
+        self.store.save_experiment(&experiment).await?;
+        self.store
+            .append_experiment_events(&experiment_sink.events())
+            .await?;
+
+        Ok(ExperimentReport {
+            experiment,
+            runs: reports,
+            experiment_events_recorded: experiment_sink.len(),
+            execution_strategy: "sequential",
+        })
+    }
+
+    fn validate_task(&self, task: &EngineeringTask) -> RunnerResult<()> {
+        task.validate()?;
+        if task.repository != self.config.repository.name {
             return Err(RunnerError::WrongRepository {
-                task_repository: request.task.repository.clone(),
+                task_repository: task.repository.clone(),
                 configured: self.config.repository.name.clone(),
             });
         }
+        Ok(())
+    }
 
-        // Checked before provisioning so a misconfigured agent costs nothing.
-        adapter.prepare().await?;
-
-        let base_rev = request.base_rev.as_deref().unwrap_or("HEAD");
-        let base_commit = self.repository.resolve(base_rev)?;
-        let base_was_dirty = !self.repository.is_clean().unwrap_or(true);
-
+    /// Executes the ordinary run pipeline from an already-resolved base.
+    async fn execute_resolved(
+        &self,
+        request: RunRequest,
+        adapter: &dyn AgentAdapter,
+        base_commit: &ResolvedBaseCommit,
+        experiment_id: Option<&ExperimentId>,
+        experiment_sink: Option<&ExperimentRecordingSink>,
+        base_was_dirty: bool,
+    ) -> RunnerResult<RunReport> {
         let agent_config = self.agent_config(&request)?;
         let run_id = self.store.next_run_id().await?;
 
@@ -198,20 +411,27 @@ impl Runner {
             run_id.clone(),
             request.task.task_id.clone(),
             agent_config,
-            &base_commit,
+            base_commit.as_str(),
         );
         run.security = Some(SecurityPosture::current(adapter.security()));
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());
 
         self.store.upsert_task(&request.task).await?;
-        self.store.save_run(&run, None).await?;
+        self.store.save_run(&run, experiment_id).await?;
+
+        if let Some(experiment_sink) = experiment_sink {
+            experiment_sink.emit(ExperimentEventPayload::ParticipantRunStarted {
+                run_id: run_id.clone(),
+                agent_id: request.agent_id.clone(),
+            });
+        }
 
         let sink = RecordingSink::new(run_id.clone());
         sink.emit(EventPayload::RunStarted {
             task_id: request.task.task_id.clone(),
             agent_id: request.agent_id.clone(),
-            base_commit: base_commit.clone(),
+            base_commit: base_commit.as_str().to_string(),
         });
 
         let keep_workspace = request
@@ -222,10 +442,10 @@ impl Runner {
             .run_inner(
                 &request,
                 &mut run,
-                &base_commit,
                 &artifacts_dir,
                 &sink,
                 adapter,
+                experiment_id,
             )
             .await;
 
@@ -241,7 +461,7 @@ impl Runner {
                     let _ = run.fail(err.to_string());
                 }
                 run.outcome = Some(RunOutcome::Errored);
-                self.persist(&run, None, &sink).await?;
+                self.persist(&run, None, &sink, experiment_id).await?;
                 return Ok(self.report(run, None, None, false, base_was_dirty, &sink));
             }
         };
@@ -264,7 +484,8 @@ impl Runner {
             }
         }
 
-        self.persist(&run, evaluation.as_ref(), &sink).await?;
+        self.persist(&run, evaluation.as_ref(), &sink, experiment_id)
+            .await?;
 
         Ok(self.report(
             run,
@@ -281,22 +502,22 @@ impl Runner {
         &self,
         request: &RunRequest,
         run: &mut AgentRun,
-        base_commit: &str,
         artifacts_dir: &Path,
         sink: &RecordingSink,
         adapter: &dyn AgentAdapter,
+        experiment_id: Option<&ExperimentId>,
     ) -> RunnerResult<(Option<Evaluation>, Option<Workspace>)> {
         // 1. Isolated workspace.
         run.transition_to(RunStatus::Preparing)?;
         let provider = self.provider(true)?;
-        let workspace = provider.provision(&run.run_id, base_commit, sink)?;
+        let workspace = provider.provision(&run.run_id, &run.base_commit, sink)?;
         run.workspace_path = Some(workspace.path.clone());
         run.branch = Some(workspace.branch.clone());
-        self.store.save_run(run, None).await?;
+        self.store.save_run(run, experiment_id).await?;
 
         // 2. The agent. Untrusted from here until the patch is read back.
         run.transition_to(RunStatus::Running)?;
-        self.store.save_run(run, None).await?;
+        self.store.save_run(run, experiment_id).await?;
 
         let timeout = request
             .timeout
@@ -331,7 +552,7 @@ impl Runner {
 
         // 4. Forge's own evaluation.
         run.transition_to(RunStatus::Evaluating)?;
-        self.store.save_run(run, None).await?;
+        self.store.save_run(run, experiment_id).await?;
 
         let evaluation = self
             .evaluate(&request.task, &workspace, run, artifacts_dir, sink)
@@ -434,8 +655,9 @@ impl Runner {
         run: &AgentRun,
         evaluation: Option<&Evaluation>,
         sink: &RecordingSink,
+        experiment_id: Option<&ExperimentId>,
     ) -> RunnerResult<()> {
-        self.store.save_run(run, None).await?;
+        self.store.save_run(run, experiment_id).await?;
         if let Some(patch) = &run.patch {
             self.store.record_patch(&run.run_id, patch).await?;
         }

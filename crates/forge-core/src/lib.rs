@@ -20,6 +20,7 @@
 pub mod agent;
 pub mod config;
 pub mod events;
+pub mod experiment;
 pub mod ids;
 pub mod integrity;
 pub mod patch;
@@ -32,6 +33,11 @@ pub mod workspace;
 pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
 pub use config::{AgentSettings, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout};
 pub use events::{Event, EventPayload, EventSink, NullSink, RecordingSink};
+pub use experiment::{
+    Comparison, ComparisonInput, ComparisonKey, ComparisonRelation, DimensionComparison,
+    Experiment, ExperimentEvent, ExperimentEventPayload, ExperimentRecordingSink, ExperimentStatus,
+    PairwiseComparison,
+};
 pub use ids::{AgentId, ExperimentId, IdError, RunId, TaskId};
 pub use integrity::{
     CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,

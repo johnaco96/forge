@@ -347,6 +347,75 @@ fn codex_runs_end_to_end_through_the_same_pipeline_without_network() {
 }
 
 #[test]
+fn compete_runs_claude_and_codex_independently_without_network() {
+    let fixture = Fixture::new();
+    let claude = fixture.stub("echo 2 > value.txt");
+    let codex = fixture.codex_stub("echo 2 > value.txt");
+    fixture.use_stub(&claude);
+    fixture.use_codex_stub(&codex);
+    let task = fixture.write_task(
+        "compete.yaml",
+        &task_yaml(
+            "  tests:\n    command: grep -q '^2$' value.txt\n  lint:\n    command: 'true'\n",
+        ),
+    );
+
+    let output = fixture.forge(&["compete", &task, "--agents", "claude,codex"]);
+    let text = stdout(&output);
+    assert!(output.status.success(), "{text}\n{}", stderr(&output));
+    assert!(text.contains("Experiment E-0001"), "{text}");
+    assert!(text.contains("Execution"), "{text}");
+    assert!(text.contains("sequential"), "{text}");
+    assert!(text.contains("Results"), "{text}");
+    assert!(text.contains("Comparison"), "{text}");
+    assert!(text.contains("Correctness"), "{text}");
+    assert!(text.contains("Cost"), "{text}");
+    assert!(text.contains("Not comparable"), "{text}");
+    assert!(text.contains("provider-reported"), "{text}");
+    assert!(text.contains("No ranking policy configured"), "{text}");
+    assert!(text.contains("CLAUDE"), "{text}");
+    assert!(text.contains("CODEX"), "{text}");
+    assert_eq!(fixture.read("value.txt"), "1\n");
+
+    let claude_invocation = claude.recorded_raw();
+    let codex_invocation = codex.recorded_raw();
+    assert!(claude_invocation.contains("worktrees/R-0001"));
+    assert!(codex_invocation.contains("worktrees/R-0002"));
+    for invocation in [&claude_invocation, &codex_invocation] {
+        assert!(invocation.contains("# Engineering task T-1042"));
+        assert!(invocation.contains("You are not the judge of this work"));
+    }
+}
+
+#[test]
+fn compete_rejects_duplicate_and_unknown_agents_before_any_agent_runs() {
+    let fixture = Fixture::new();
+    let claude = fixture.stub("echo 2 > value.txt");
+    fixture.use_stub(&claude);
+    let task = fixture.write_task(
+        "compete.yaml",
+        &task_yaml("  tests:\n    command: 'true'\n"),
+    );
+
+    let duplicate = fixture.forge(&["compete", &task, "--agents", "claude,claude"]);
+    assert_eq!(duplicate.status.code(), Some(1));
+    assert!(stderr(&duplicate).contains("duplicate agent"));
+
+    let unknown = fixture.forge(&["compete", &task, "--agents", "claude,unknown"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(stderr(&unknown).contains("unknown agent `unknown`"));
+
+    let invalid_task = fixture.write_task(
+        "invalid-compete.yaml",
+        "task_id: T-9\nrepository: distributed-runtime\nobjective: '   '\n",
+    );
+    let invalid = fixture.forge(&["compete", &invalid_task, "--agents", "claude,codex"]);
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(stderr(&invalid).contains("objective"));
+    assert!(claude.recorded_raw().is_empty());
+}
+
+#[test]
 fn a_nonzero_codex_exit_is_separate_from_a_passing_forge_outcome() {
     let fixture = Fixture::new();
     let stub = fixture.codex_stub_with(

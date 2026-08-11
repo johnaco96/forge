@@ -10,6 +10,7 @@ use std::str::FromStr;
 use chrono::{DateTime, Utc};
 use forge_core::agent::{AgentConfig, AgentDescriptor};
 use forge_core::events::Event;
+use forge_core::experiment::{Experiment, ExperimentEvent};
 use forge_core::ids::{ExperimentId, RunId, TaskId};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus};
@@ -238,7 +239,8 @@ impl Store {
                  record_json = excluded.record_json,
                  agent_status = excluded.agent_status,
                  outcome = excluded.outcome,
-                 branch = excluded.branch",
+                 branch = excluded.branch,
+                 experiment_id = COALESCE(runs.experiment_id, excluded.experiment_id)",
         )
         .bind(run.run_id.as_str())
         .bind(run.task_id.as_str())
@@ -267,6 +269,111 @@ impl Store {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    /// Writes an experiment record without copying any participant run data.
+    /// The run links live in `runs.experiment_id` and are reconciled on load.
+    pub async fn save_experiment(&self, experiment: &Experiment) -> StoreResult<()> {
+        sqlx::query(
+            "INSERT INTO experiments (
+                 experiment_id, task_id, repository, base_commit, agents_json, status,
+                 created_at, completed_at, failure_reason, comparison_json, record_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT (experiment_id) DO UPDATE SET
+                 status = excluded.status,
+                 completed_at = excluded.completed_at,
+                 failure_reason = excluded.failure_reason,
+                 comparison_json = excluded.comparison_json,
+                 record_json = excluded.record_json",
+        )
+        .bind(experiment.experiment_id.as_str())
+        .bind(experiment.task_id.as_str())
+        .bind(&experiment.repository)
+        .bind(&experiment.base_commit)
+        .bind(serde_json::to_string(&experiment.agents)?)
+        .bind(experiment.status.as_str())
+        .bind(experiment.created_at.to_rfc3339())
+        .bind(experiment.completed_at.map(|time| time.to_rfc3339()))
+        .bind(experiment.failure_reason.as_deref())
+        .bind(
+            experiment
+                .comparison
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()?,
+        )
+        .bind(serde_json::to_string(experiment)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_experiment(
+        &self,
+        experiment_id: &ExperimentId,
+    ) -> StoreResult<Option<Experiment>> {
+        let record: Option<String> =
+            sqlx::query_scalar("SELECT record_json FROM experiments WHERE experiment_id = ?1")
+                .bind(experiment_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        let Some(record) = record else {
+            return Ok(None);
+        };
+        let mut experiment: Experiment = serde_json::from_str(&record)?;
+        let linked_run_ids: Vec<String> = sqlx::query_scalar(
+            "SELECT run_id FROM runs WHERE experiment_id = ?1 ORDER BY created_at, run_id",
+        )
+        .bind(experiment_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        experiment.run_ids = linked_run_ids
+            .into_iter()
+            .map(|raw| RunId::new(raw).map_err(|error| StoreError::Corrupt(error.to_string())))
+            .collect::<StoreResult<Vec<_>>>()?;
+        Ok(Some(experiment))
+    }
+
+    /// Appends experiment lifecycle events idempotently.
+    pub async fn append_experiment_events(&self, events: &[ExperimentEvent]) -> StoreResult<usize> {
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await?;
+        let mut written = 0;
+        for event in events {
+            let result = sqlx::query(
+                "INSERT INTO experiment_events (
+                     experiment_id, seq, timestamp, event_type, data_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (experiment_id, seq) DO NOTHING",
+            )
+            .bind(event.experiment_id.as_str())
+            .bind(event.seq as i64)
+            .bind(event.timestamp.to_rfc3339())
+            .bind(event.event_type())
+            .bind(serde_json::to_string(&event.payload)?)
+            .execute(&mut *tx)
+            .await?;
+            written += result.rows_affected() as usize;
+        }
+        tx.commit().await?;
+        Ok(written)
+    }
+
+    pub async fn experiment_events_for(
+        &self,
+        experiment_id: &ExperimentId,
+    ) -> StoreResult<Vec<ExperimentEvent>> {
+        let rows = sqlx::query(
+            "SELECT experiment_id, seq, timestamp, data_json FROM experiment_events
+             WHERE experiment_id = ?1 ORDER BY seq",
+        )
+        .bind(experiment_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+
+        rows.into_iter().map(decode_experiment_event).collect()
     }
 
     pub async fn load_run(&self, run_id: &RunId) -> StoreResult<Option<AgentRun>> {
@@ -464,12 +571,29 @@ impl Store {
             .await?;
         Ok(count as u64)
     }
+
+    pub async fn experiment_count(&self) -> StoreResult<u64> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM experiments")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(count as u64)
+    }
 }
 
 fn decode_event(row: SqliteRow) -> StoreResult<Event> {
     Ok(Event {
         run_id: RunId::new(row.try_get::<String, _>("run_id")?)
             .map_err(|e| StoreError::Corrupt(e.to_string()))?,
+        seq: row.try_get::<i64, _>("seq")? as u64,
+        timestamp: parse_time(&row.try_get::<String, _>("timestamp")?)?,
+        payload: parse_json(&row.try_get::<String, _>("data_json")?)?,
+    })
+}
+
+fn decode_experiment_event(row: SqliteRow) -> StoreResult<ExperimentEvent> {
+    Ok(ExperimentEvent {
+        experiment_id: ExperimentId::new(row.try_get::<String, _>("experiment_id")?)
+            .map_err(|error| StoreError::Corrupt(error.to_string()))?,
         seq: row.try_get::<i64, _>("seq")? as u64,
         timestamp: parse_time(&row.try_get::<String, _>("timestamp")?)?,
         payload: parse_json(&row.try_get::<String, _>("data_json")?)?,
@@ -556,6 +680,9 @@ mod tests {
     use super::*;
     use forge_core::agent::AgentConfig;
     use forge_core::events::{EventPayload, EventSink, RecordingSink};
+    use forge_core::experiment::{
+        Comparison, Experiment, ExperimentEventPayload, ExperimentRecordingSink, ExperimentStatus,
+    };
     use forge_core::ids::AgentId;
     use forge_core::integrity::ProtectionPolicy;
     use forge_core::result::{CheckResult, Direction, Metric, Verdict};
@@ -616,6 +743,67 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(store.next_run_id().await.unwrap().as_str(), "R-0003");
+    }
+
+    #[tokio::test]
+    async fn an_experiment_persists_links_comparison_and_lifecycle_events() {
+        let store = store().await;
+        let task = task();
+        store.upsert_task(&task).await.unwrap();
+        let experiment_id = store.next_experiment_id().await.unwrap();
+        let mut experiment = Experiment::new(
+            experiment_id.clone(),
+            task.task_id.clone(),
+            &task.repository,
+            "a73cf21",
+            vec!["claude".into(), "codex".into()],
+        );
+        store.save_experiment(&experiment).await.unwrap();
+
+        let run = run(RunId::sequential(1));
+        store.save_run(&run, Some(&experiment_id)).await.unwrap();
+        experiment.record_run(run.run_id.clone());
+        experiment.complete(Comparison {
+            experiment_id: experiment_id.clone(),
+            dimensions: Vec::new(),
+        });
+        store.save_experiment(&experiment).await.unwrap();
+
+        let sink = ExperimentRecordingSink::new(experiment_id.clone());
+        sink.emit(ExperimentEventPayload::ExperimentStarted {
+            task_id: task.task_id,
+            repository: task.repository,
+            base_commit: "a73cf21".into(),
+            agents: vec!["claude".into(), "codex".into()],
+        });
+        sink.emit(ExperimentEventPayload::ExperimentCompleted { run_count: 1 });
+        assert_eq!(
+            store
+                .append_experiment_events(&sink.events())
+                .await
+                .unwrap(),
+            2
+        );
+
+        let loaded = store
+            .load_experiment(&experiment_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.status, ExperimentStatus::Completed);
+        assert_eq!(loaded.run_ids, vec![run.run_id]);
+        assert!(loaded.comparison.is_some());
+        assert_eq!(
+            store
+                .experiment_events_for(&experiment_id)
+                .await
+                .unwrap()
+                .iter()
+                .map(ExperimentEvent::event_type)
+                .collect::<Vec<_>>(),
+            vec!["ExperimentStarted", "ExperimentCompleted"]
+        );
+        assert_eq!(store.experiment_count().await.unwrap(), 1);
     }
 
     #[tokio::test]

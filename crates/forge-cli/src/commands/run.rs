@@ -81,7 +81,7 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     })
 }
 
-fn resolve_repository(repo: Option<&Path>) -> Result<(Repository, Layout, ForgeConfig)> {
+pub(crate) fn resolve_repository(repo: Option<&Path>) -> Result<(Repository, Layout, ForgeConfig)> {
     let start = match repo {
         Some(path) => path.to_path_buf(),
         None => std::env::current_dir().context("resolving the current directory")?,
@@ -369,12 +369,12 @@ fn relative(layout: &Layout, path: &Path) -> String {
         .to_string()
 }
 
-fn short(commit: &str) -> String {
+pub(crate) fn short(commit: &str) -> String {
     commit.chars().take(7).collect()
 }
 
 /// A one-line summary of an objective, short enough not to wrap a terminal.
-fn summarize(text: &str) -> String {
+pub(crate) fn summarize(text: &str) -> String {
     const MAX: usize = 68;
     let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if collapsed.chars().count() <= MAX {
@@ -385,7 +385,7 @@ fn summarize(text: &str) -> String {
     format!("{} …", &truncated[..cut])
 }
 
-fn thousands(value: u64) -> String {
+pub(crate) fn thousands(value: u64) -> String {
     let digits = value.to_string();
     let mut out = String::new();
     for (i, c) in digits.chars().enumerate() {
@@ -397,7 +397,7 @@ fn thousands(value: u64) -> String {
     out
 }
 
-fn format_duration(delta: Option<chrono::TimeDelta>) -> String {
+pub(crate) fn format_duration(delta: Option<chrono::TimeDelta>) -> String {
     let Some(delta) = delta else {
         return "unknown".to_string();
     };

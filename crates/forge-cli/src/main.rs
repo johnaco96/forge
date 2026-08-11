@@ -65,6 +65,28 @@ enum Command {
         keep_workspace: bool,
     },
 
+    /// Run several agents independently from one base and compare the results.
+    Compete {
+        /// Path to a task file (`.yaml`, `.yml`, or `.json`).
+        task: PathBuf,
+
+        /// Comma-separated agents. At least two, with no duplicates.
+        #[arg(long, value_name = "AGENT,AGENT[,...]")]
+        agents: String,
+
+        /// Revision every competitor starts from. Defaults to HEAD.
+        #[arg(long, value_name = "REV")]
+        base: Option<String>,
+
+        /// Wall-clock budget for each agent.
+        #[arg(long, value_name = "SECONDS")]
+        timeout_secs: Option<u64>,
+
+        /// Keep every participant workspace after the experiment.
+        #[arg(long)]
+        keep_workspace: bool,
+    },
+
     /// Inspect the agents Forge knows about.
     Agent {
         #[command(subcommand)]
@@ -149,6 +171,29 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 }
             })
         }
+        Command::Compete {
+            task,
+            agents,
+            base,
+            timeout_secs,
+            keep_workspace,
+        } => {
+            let exit = commands::compete::run(commands::compete::CompeteArgs {
+                task_path: task,
+                repo: cli.repo,
+                agents,
+                base,
+                timeout_secs,
+                keep_workspace,
+            })
+            .await?;
+            Ok(match exit {
+                commands::compete::CompeteExit::AllPassed => std::process::ExitCode::SUCCESS,
+                commands::compete::CompeteExit::SomeNotPassed => {
+                    std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                }
+            })
+        }
         Command::Agent { command } => match command {
             AgentCommand::List => {
                 commands::agent::list()?;
@@ -196,6 +241,7 @@ mod tests {
             vec!["forge", "agent", "list"],
             vec!["forge", "task", "validate", "task.yaml"],
             vec!["forge", "run", "task.yaml", "--agent", "claude"],
+            vec!["forge", "compete", "task.yaml", "--agents", "claude,codex"],
             vec!["forge", "--repo", "/tmp/repo", "agent", "list"],
         ] {
             Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
@@ -216,9 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn unknown_commands_are_rejected() {
-        // `forge compete` is Phase 1; it must fail loudly rather than silently
-        // doing nothing.
+    fn compete_requires_the_agents_option() {
         assert!(Cli::try_parse_from(["forge", "compete", "task.yaml"]).is_err());
     }
 }
