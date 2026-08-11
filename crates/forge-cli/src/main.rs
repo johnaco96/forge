@@ -91,6 +91,24 @@ enum Command {
         keep_workspace: bool,
     },
 
+    /// Execute an explicit, validated task DAG as a multi-agent team.
+    Team {
+        /// Path to a task file containing a `team` plan.
+        task: PathBuf,
+
+        /// Revision the root team objective starts from. Defaults to HEAD.
+        #[arg(long, value_name = "REV")]
+        base: Option<String>,
+
+        /// Wall-clock budget for each agent-backed node.
+        #[arg(long, value_name = "SECONDS")]
+        timeout_secs: Option<u64>,
+
+        /// Keep node workspaces after their ordinary Forge runs.
+        #[arg(long)]
+        keep_workspace: bool,
+    },
+
     /// Inspect the agents Forge knows about.
     Agent {
         #[command(subcommand)]
@@ -287,6 +305,27 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 }
             })
         }
+        Command::Team {
+            task,
+            base,
+            timeout_secs,
+            keep_workspace,
+        } => {
+            let exit = commands::team::run(commands::team::TeamArgs {
+                task_path: task,
+                repo: cli.repo,
+                base,
+                timeout_secs,
+                keep_workspace,
+            })
+            .await?;
+            Ok(match exit {
+                commands::team::TeamExit::Passed => std::process::ExitCode::SUCCESS,
+                commands::team::TeamExit::NotPassed => {
+                    std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                }
+            })
+        }
         Command::Agent { command } => match command {
             AgentCommand::List => {
                 commands::agent::list()?;
@@ -430,6 +469,7 @@ mod tests {
             vec!["forge", "task", "validate", "task.yaml"],
             vec!["forge", "run", "task.yaml", "--agent", "claude"],
             vec!["forge", "compete", "task.yaml", "--agents", "claude,codex"],
+            vec!["forge", "team", "task.yaml"],
             vec!["forge", "history", "--agent", "codex", "--limit", "10"],
             vec!["forge", "agent", "stats", "codex"],
             vec!["forge", "failures", "--component", "runner"],
@@ -458,5 +498,17 @@ mod tests {
     #[test]
     fn compete_requires_the_agents_option() {
         assert!(Cli::try_parse_from(["forge", "compete", "task.yaml"]).is_err());
+    }
+
+    #[test]
+    fn the_team_command_parses_with_its_options() {
+        for args in [
+            vec!["forge", "team", "task.yaml"],
+            vec!["forge", "team", "task.yaml", "--base", "main~1"],
+            vec!["forge", "team", "task.yaml", "--timeout-secs", "600"],
+            vec!["forge", "team", "task.yaml", "--keep-workspace"],
+        ] {
+            Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));
+        }
     }
 }

@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use chrono::Utc;
-use forge_core::events::EventPayload;
+use forge_core::events::{EvaluationSubject, EventPayload};
 use forge_core::ids::RunId;
 use forge_core::result::{CheckResult, Dimension, Evaluation, EvaluatorKind, Score, Verdict};
 use forge_core::task::EngineeringTask;
@@ -90,7 +90,7 @@ impl EvaluationPlan {
     /// Compatibility entry point; all execution still flows through the one
     /// evaluation engine.
     pub async fn run(&self, run_id: RunId, ctx: &EvaluationContext<'_>) -> Evaluation {
-        EvaluationEngine::run_plan(self, run_id, ctx).await
+        EvaluationEngine::run_plan(self, run_id.into(), ctx).await
     }
 }
 
@@ -110,7 +110,7 @@ impl EvaluationEngine {
     }
 
     pub async fn run(&self, run_id: RunId, ctx: &EvaluationContext<'_>) -> Evaluation {
-        Self::run_plan(&self.plan, run_id, ctx).await
+        Self::run_plan(&self.plan, run_id.into(), ctx).await
     }
 
     pub async fn execute(
@@ -118,22 +118,32 @@ impl EvaluationEngine {
         run_id: RunId,
         ctx: &EvaluationContext<'_>,
     ) -> Evaluation {
-        Self::run_plan(plan, run_id, ctx).await
+        Self::run_plan(plan, run_id.into(), ctx).await
+    }
+
+    pub async fn execute_subject(
+        plan: &EvaluationPlan,
+        subject: EvaluationSubject,
+        ctx: &EvaluationContext<'_>,
+    ) -> Evaluation {
+        Self::run_plan(plan, subject, ctx).await
     }
 
     async fn run_plan(
         plan: &EvaluationPlan,
-        run_id: RunId,
+        subject: EvaluationSubject,
         ctx: &EvaluationContext<'_>,
     ) -> Evaluation {
         let started_at = Utc::now();
         ctx.events.emit(EventPayload::EvaluationStarted {
+            subject: subject.clone(),
             evaluators: plan.ids(),
         });
 
         let mut checks = Vec::with_capacity(plan.evaluators.len());
         for evaluator in &plan.evaluators {
             ctx.events.emit(EventPayload::EvaluatorStarted {
+                subject: subject.clone(),
                 evaluator_id: evaluator.id().to_string(),
                 kind: evaluator.kind(),
                 required: evaluator.required(),
@@ -149,6 +159,7 @@ impl EvaluationEngine {
             let check = match evaluator.evaluate(ctx).await {
                 Ok(check) => {
                     ctx.events.emit(EventPayload::EvaluatorCompleted {
+                        subject: subject.clone(),
                         evaluator_id: check.name.clone(),
                         kind: check.kind,
                         verdict: check.verdict,
@@ -162,6 +173,7 @@ impl EvaluationEngine {
                     let error = error.to_string();
                     tracing::warn!(check = evaluator.id(), %error, "evaluator could not run");
                     ctx.events.emit(EventPayload::EvaluatorFailed {
+                        subject: subject.clone(),
                         evaluator_id: evaluator.id().to_string(),
                         kind: evaluator.kind(),
                         required: evaluator.required(),
@@ -183,16 +195,17 @@ impl EvaluationEngine {
             checks.push(check);
         }
 
-        let evaluation = derive_dimensions(Evaluation::from_checks(
-            run_id,
+        let evaluation = derive_dimensions(Evaluation::from_subject_checks(
+            subject.clone(),
             checks,
             started_at,
             Utc::now(),
         ));
         ctx.events.emit(EventPayload::EvaluationCompleted {
+            subject: subject.clone(),
             verdict: evaluation.verdict,
         });
-        if !evaluation.dimensions.is_empty() {
+        if matches!(subject, EvaluationSubject::Run(_)) && !evaluation.dimensions.is_empty() {
             ctx.events.emit(EventPayload::RunScored {
                 dimensions: evaluation
                     .dimensions
@@ -262,9 +275,21 @@ pub type EvaluatorSet = EvaluationPlan;
 mod tests {
     use super::*;
     use crate::test_support::{TestWorkspace, task_with};
-    use forge_core::events::{NullSink, RecordingSink};
+    use std::sync::Mutex;
+
+    use forge_core::events::{EvaluationSubject, EventPayload, EventSink, NullSink, RecordingSink};
+    use forge_core::ids::TeamExecutionId;
     use forge_core::result::EvaluatorExecutionStatus;
     use forge_executor::ProcessRunner;
+
+    #[derive(Default)]
+    struct PayloadSink(Mutex<Vec<EventPayload>>);
+
+    impl EventSink for PayloadSink {
+        fn emit(&self, payload: EventPayload) {
+            self.0.lock().unwrap().push(payload);
+        }
+    }
 
     #[tokio::test]
     async fn a_task_without_evaluation_yields_an_inconclusive_verdict() {
@@ -291,6 +316,10 @@ mod tests {
             .await;
 
         assert_eq!(evaluation.verdict, Verdict::Pass);
+        assert_eq!(
+            evaluation.subject,
+            EvaluationSubject::Run(RunId::sequential(1))
+        );
         assert_eq!(evaluation.checks.len(), 2);
         assert_eq!(evaluation.check("tests").unwrap().kind, EvaluatorKind::Test);
         let types: Vec<&str> = sink
@@ -312,6 +341,34 @@ mod tests {
                 .count(),
             2
         );
+        assert!(sink.events().iter().all(|event| {
+            event
+                .payload
+                .evaluation_subject()
+                .is_none_or(|subject| subject == &evaluation.subject)
+        }));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_events_preserve_a_team_subject_throughout_evaluation() {
+        let task = task_with(&[("tests", "exit 0"), ("lint", "exit 0")]);
+        let ws = TestWorkspace::with_task(task);
+        let runner = ProcessRunner::conservative();
+        let sink = PayloadSink::default();
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &sink);
+        let subject = EvaluationSubject::TeamExecution(TeamExecutionId::sequential(4));
+        let plan = EvaluationPlan::resolve(&ws.task);
+        let evaluation = EvaluationEngine::execute_subject(&plan, subject.clone(), &ctx).await;
+
+        assert_eq!(evaluation.verdict, Verdict::Pass);
+        assert_eq!(evaluation.subject, subject);
+        let events = sink.0.lock().unwrap();
+        let lifecycle = events
+            .iter()
+            .filter_map(|event| event.evaluation_subject().cloned())
+            .collect::<Vec<_>>();
+        assert_eq!(lifecycle.len(), 6);
+        assert!(lifecycle.iter().all(|candidate| candidate == &subject));
     }
 
     #[tokio::test]

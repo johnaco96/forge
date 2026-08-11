@@ -9,7 +9,7 @@ use std::str::FromStr;
 
 use chrono::{DateTime, Utc};
 use forge_core::agent::{AgentConfig, AgentDescriptor};
-use forge_core::events::Event;
+use forge_core::events::{EvaluationSubject, Event};
 use forge_core::experiment::{Experiment, ExperimentEvent};
 use forge_core::ids::{ExperimentId, RoutingDecisionId, RunId, TaskId};
 use forge_core::result::{Evaluation, Verdict};
@@ -261,7 +261,7 @@ impl Store {
             .collect()
     }
 
-    async fn next_counter(&self, name: &str) -> StoreResult<u64> {
+    pub(crate) async fn next_counter(&self, name: &str) -> StoreResult<u64> {
         let value: i64 = sqlx::query_scalar(
             "INSERT INTO counters (name, value) VALUES (?1, 1)
              ON CONFLICT (name) DO UPDATE SET value = value + 1
@@ -766,6 +766,14 @@ impl Store {
         let mut tx = self.pool.begin().await?;
         let mut written = 0;
         for event in events {
+            if let Some(subject) = event.payload.evaluation_subject()
+                && subject != &EvaluationSubject::Run(event.run_id.clone())
+            {
+                return Err(StoreError::EvaluationEventSubjectConflict {
+                    run_id: event.run_id.to_string(),
+                    subject: evaluation_subject_name(subject),
+                });
+            }
             let result = sqlx::query(
                 "INSERT INTO events (run_id, seq, timestamp, event_type, data_json)
                  VALUES (?1, ?2, ?3, ?4, ?5)
@@ -823,6 +831,14 @@ impl Store {
 
     /// Stores an evaluation and every raw metric behind it.
     pub async fn record_evaluation(&self, evaluation: &Evaluation) -> StoreResult<()> {
+        let run_id = match &evaluation.subject {
+            EvaluationSubject::Run(run_id) => run_id,
+            EvaluationSubject::TeamExecution(team_execution_id) => {
+                return Err(StoreError::TeamEvaluationInRunTable {
+                    team_execution_id: team_execution_id.to_string(),
+                });
+            }
+        };
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(
@@ -836,7 +852,7 @@ impl Store {
                  dimensions_json = excluded.dimensions_json,
                  summary_json = excluded.summary_json",
         )
-        .bind(evaluation.run_id.as_str())
+        .bind(run_id.as_str())
         .bind(enum_str(&evaluation.verdict)?)
         .bind(evaluation.started_at.to_rfc3339())
         .bind(evaluation.finished_at.to_rfc3339())
@@ -847,7 +863,7 @@ impl Store {
         .await?;
 
         sqlx::query("DELETE FROM evaluator_results WHERE run_id = ?1")
-            .bind(evaluation.run_id.as_str())
+            .bind(run_id.as_str())
             .execute(&mut *tx)
             .await?;
         for check in &evaluation.checks {
@@ -858,7 +874,7 @@ impl Store {
                     warning_count, execution_error, result_json
                  ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )
-            .bind(evaluation.run_id.as_str())
+            .bind(run_id.as_str())
             .bind(&check.name)
             .bind(check.kind.as_str())
             .bind(check.required)
@@ -884,7 +900,7 @@ impl Store {
         // Metrics are rewritten wholesale so a re-evaluation cannot leave
         // measurements from a previous attempt behind.
         sqlx::query("DELETE FROM metrics WHERE run_id = ?1")
-            .bind(evaluation.run_id.as_str())
+            .bind(run_id.as_str())
             .execute(&mut *tx)
             .await?;
 
@@ -893,7 +909,7 @@ impl Store {
                 "INSERT INTO metrics (run_id, name, value, unit, source, direction)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )
-            .bind(evaluation.run_id.as_str())
+            .bind(run_id.as_str())
             .bind(&metric.name)
             .bind(metric.value)
             .bind(metric.unit.as_deref())
@@ -928,7 +944,7 @@ impl Store {
         .await?;
 
         Ok(Some(Evaluation {
-            run_id: run_id.clone(),
+            subject: EvaluationSubject::Run(run_id.clone()),
             verdict: parse_enum(&row.try_get::<String, _>("verdict")?)?,
             checks: parse_json(&row.try_get::<String, _>("checks_json")?)?,
             dimensions: parse_json(&row.try_get::<String, _>("dimensions_json")?)?,
@@ -1004,13 +1020,14 @@ fn routing_event_type(payload: &RoutingEventPayload) -> &'static str {
 }
 
 fn decode_event(row: SqliteRow) -> StoreResult<Event> {
-    Ok(Event {
-        run_id: RunId::new(row.try_get::<String, _>("run_id")?)
+    Event::from_run_parts(
+        RunId::new(row.try_get::<String, _>("run_id")?)
             .map_err(|e| StoreError::Corrupt(e.to_string()))?,
-        seq: row.try_get::<i64, _>("seq")? as u64,
-        timestamp: parse_time(&row.try_get::<String, _>("timestamp")?)?,
-        payload: parse_json(&row.try_get::<String, _>("data_json")?)?,
-    })
+        row.try_get::<i64, _>("seq")? as u64,
+        parse_time(&row.try_get::<String, _>("timestamp")?)?,
+        parse_json(&row.try_get::<String, _>("data_json")?)?,
+    )
+    .map_err(Into::into)
 }
 
 fn decode_experiment_event(row: SqliteRow) -> StoreResult<ExperimentEvent> {
@@ -1068,6 +1085,15 @@ fn decode_run_summary(row: SqliteRow) -> StoreResult<RunSummary> {
 
 fn parse_json<T: serde::de::DeserializeOwned>(raw: &str) -> StoreResult<T> {
     Ok(serde_json::from_str(raw)?)
+}
+
+fn evaluation_subject_name(subject: &EvaluationSubject) -> String {
+    match subject {
+        EvaluationSubject::Run(run_id) => format!("run:{run_id}"),
+        EvaluationSubject::TeamExecution(team_execution_id) => {
+            format!("team_execution:{team_execution_id}")
+        }
+    }
 }
 
 /// Stores an enum using its serde name.
@@ -1344,13 +1370,42 @@ mod tests {
             stdout_path: None,
             stderr_path: None,
         });
+        sink.emit(EventPayload::EvaluationCompleted {
+            subject: EvaluationSubject::Run(run.run_id.clone()),
+            verdict: Verdict::Fail,
+        });
 
         let emitted = sink.drain();
-        assert_eq!(store.append_events(&emitted).await.unwrap(), 3);
+        assert_eq!(store.append_events(&emitted).await.unwrap(), 4);
 
         let stored = store.events_for(&run.run_id).await.unwrap();
         assert_eq!(stored, emitted);
         assert_eq!(stored[1].event_type(), "CommandExecuted");
+    }
+
+    #[tokio::test]
+    async fn legacy_run_only_evaluation_events_remain_queryable() {
+        let store = store().await;
+        store.upsert_task(&task()).await.unwrap();
+        let run = run(RunId::sequential(42));
+        store.save_run(&run, None).await.unwrap();
+        sqlx::query(
+            "INSERT INTO events (run_id, seq, timestamp, event_type, data_json)
+             VALUES (?1, 0, ?2, 'EvaluationCompleted', ?3)",
+        )
+        .bind(run.run_id.as_str())
+        .bind(Utc::now().to_rfc3339())
+        .bind(r#"{"event_type":"EvaluationCompleted","data":{"verdict":"pass"}}"#)
+        .execute(store.pool())
+        .await
+        .unwrap();
+
+        let events = store.events_for(&run.run_id).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].payload.evaluation_subject(),
+            Some(&EvaluationSubject::Run(run.run_id))
+        );
     }
 
     #[tokio::test]

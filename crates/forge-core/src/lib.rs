@@ -29,20 +29,24 @@ pub mod routing;
 pub mod run;
 pub mod security;
 pub mod task;
+pub mod team;
 pub mod workspace;
 
 pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
 pub use config::{
     AgentSettings, BaselineRoutingConfig, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout,
-    RoutingConfig,
+    RoutingConfig, TeamConfig,
 };
-pub use events::{Event, EventPayload, EventSink, NullSink, RecordingSink};
+pub use events::{EvaluationSubject, Event, EventPayload, EventSink, NullSink, RecordingSink};
 pub use experiment::{
     Comparison, ComparisonInput, ComparisonKey, ComparisonRelation, DimensionComparison,
     Experiment, ExperimentEvent, ExperimentEventPayload, ExperimentRecordingSink, ExperimentStatus,
     PairwiseComparison,
 };
-pub use ids::{AgentId, ExperimentId, IdError, RoutingDecisionId, RunId, TaskId};
+pub use ids::{
+    AgentId, ExperimentId, IdError, RoutingDecisionId, RunId, TaskId, TeamArtifactId,
+    TeamExecutionId, TeamNodeId,
+};
 pub use integrity::{
     CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,
 };
@@ -74,5 +78,14 @@ pub use security::{AgentSecurity, HostContainment, SecurityPosture, WorkspaceIso
 pub use task::{
     BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskClassification,
     TaskError, TaskMetadata, TaskRevision, TaskRevisionError, TaskRevisionId,
+};
+pub use team::{
+    FinalCandidate, NodeTaskLineage, PlanProvenance, PlanSourceKind, ResolvedTeamAssignment,
+    ReviewDecision, ReviewFinding, ReviewResult, SingleAgentBaseline, TEAM_PLAN_VERSION,
+    TeamArtifact, TeamArtifactContent, TeamArtifactKind, TeamAssignmentStrategy,
+    TeamBaselineComparison, TeamComparisonRelation, TeamEdge, TeamEvent, TeamEventPayload,
+    TeamExecution, TeamExecutionType, TeamFailureKind, TeamFinalEvaluation, TeamNodeExecution,
+    TeamNodeStatus, TeamOutcome, TeamPlan, TeamPlanError, TeamPlanNode, TeamResourceSummary,
+    TeamStatus, ValidatedTeamPlan,
 };
 pub use workspace::{Workspace, WorkspaceKind};

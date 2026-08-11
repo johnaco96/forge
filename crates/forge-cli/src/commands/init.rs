@@ -20,6 +20,7 @@ const FORGE_GITIGNORE: &str = "\
 # Configuration and task definitions are tracked; run output is not.
 worktrees/
 runs/
+teams/
 forge.db
 forge.db-wal
 forge.db-shm
@@ -117,6 +118,7 @@ pub async fn run(args: InitArgs) -> Result<()> {
         layout.forge_dir(),
         layout.tasks_dir(),
         layout.runs_dir(),
+        layout.teams_dir(),
         layout.worktrees_root(&config),
     ] {
         fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;

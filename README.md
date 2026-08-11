@@ -39,8 +39,9 @@ base commit into a comparative experiment.
 | **Codex adapter and `forge run --agent codex`** | ✅ |
 | **`forge compete task.yaml --agents claude,codex`** | ✅ |
 | **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ |
-| **Provider-agnostic historical routing and trusted evidence policy** | ✅ Phase 4B review candidate |
-| Multi-agent teamwork and later optimization | ⬜ later |
+| **Provider-agnostic historical routing and trusted evidence policy** | ✅ |
+| **Task-driven multi-agent DAG execution with final evaluation** | ✅ Phase 5 review candidate |
+| Repository world model and later optimization | ⬜ later |
 
 ---
 
@@ -102,6 +103,19 @@ run with its own worktree, patch, evaluation, and trajectory. The experiment
 stores their shared base and run links, then reports pairwise dimensional
 relationships. One failed or timed-out participant does not erase the others.
 
+To coordinate dependent work from an explicit, reproducible task DAG:
+
+```bash
+forge team .forge/tasks/my-team-task.yaml
+```
+
+Agent-backed nodes remain ordinary Forge runs in isolated worktrees. Declared
+artifacts and candidate commits are the only handoff channels, review evidence
+is advisory, and the integrated candidate is independently checked through the
+normal patch, integrity, and evaluation pipeline. See
+[`docs/team-execution.md`](docs/team-execution.md) for the plan format and
+execution contract.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -109,6 +123,7 @@ relationships. One failed or timed-out participant does not erase the others.
 | `0` | A change was produced and every check passed |
 | `1` | Forge could not run the task (bad task, missing CLI, not a repo) |
 | `2` | The run completed but the outcome was not a pass |
+| `3` | Automatic single-agent routing stopped without selecting an agent |
 
 `1` and `2` are deliberately different: "the tool broke" and "the change didn't
 work" call for different responses in a script.
@@ -180,6 +195,8 @@ See [`docs/experience-ledger.md`](docs/experience-ledger.md) for query semantics
 similarity weights, missing-data rules, and the JSONL schema.
 See [`docs/routing.md`](docs/routing.md) for pre-run features, provenance,
 evidence eligibility, readiness, decision contracts, and reproducibility.
+See [`docs/team-execution.md`](docs/team-execution.md) for task DAGs, typed
+handoffs, assignment, integration, review, and team persistence.
 
 ---
 
@@ -276,12 +293,14 @@ Everything is under `.forge/` in the repository:
 ├── tasks/               # task definitions       (commit these)
 ├── forge.db             # the experience ledger  (ignored)
 ├── worktrees/<run-id>/  # agent workspaces       (ignored)
-└── runs/<run-id>/       # per-run artifacts      (ignored)
-    ├── prompt.txt           # exactly what the agent was asked
-    ├── agent.stdout.log     # captured agent output
-    ├── agent.stderr.log
-    ├── patch.diff           # the change, read out of Git
-    └── checks/<name>.log    # full output of each check
+├── runs/<run-id>/       # per-run artifacts      (ignored)
+│   ├── prompt.txt           # exactly what the agent was asked
+│   ├── agent.stdout.log     # captured agent output
+│   ├── agent.stderr.log
+│   ├── patch.diff           # the change, read out of Git
+│   └── checks/<name>.log    # full output of each check
+└── teams/<team-id>/     # final team artifacts   (ignored)
+    └── final.patch.diff
 ```
 
 `forge init` writes `.forge/.gitignore` so run output never enters your history
@@ -331,6 +350,14 @@ periodic_competition_interval = 10
 [routing.baseline]
 prior_alpha = 1.0
 prior_beta = 1.0
+```
+
+The initial team scheduler is deliberately sequential:
+
+```toml
+[team]
+max_parallel_nodes = 1
+stop_on_required_node_failure = false
 ```
 
 ```toml
@@ -423,6 +450,13 @@ forge-cli ── forge-runner (execution pipeline)
 forge-router (historical-baseline-v1 selection and explanation)
 └── forge-store          trusted routing evidence query
 
+forge-team (validated DAG scheduler)
+├── forge-runner         ordinary agent-backed node runs
+├── forge-router         automatic node assignment
+├── forge-git            commit inheritance and final worktree
+├── forge-eval           independent final evaluation
+└── forge-store          team plan, lineage, artifacts, and events
+
 All provider-agnostic domain contracts converge on forge-core.
 ```
 
@@ -436,6 +470,7 @@ All provider-agnostic domain contracts converge on forge-core.
 | `forge-store` | The SQLite experience ledger. |
 | `forge-router` | Candidate resolution, trusted evidence, and the versioned historical baseline. |
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
+| `forge-team` | Typed planning and deterministic DAG coordination over ordinary runs. |
 | `forge-cli` | The `forge` binary. |
 
 Everything provider-specific lives in its adapter file:
@@ -479,7 +514,8 @@ they should be recomputable from history rather than requiring re-runs.
 because that is the raw dataset a routing model will eventually learn from.
 Forge records only events it can actually observe — it does not fabricate
 fine-grained `FileRead`/`FileModified` events that the agent interface does not
-expose.
+expose. Evaluation lifecycle events identify their real typed subject: an
+ordinary run or a team execution's integrated final candidate.
 
 ---
 
@@ -517,6 +553,12 @@ Or as one controlled infrastructure experiment from an identical base:
 
 ```bash
 forge compete task.yaml --agents claude,codex
+```
+
+Or execute an explicit team plan embedded in the task file:
+
+```bash
+forge team task.yaml
 ```
 
 The fixture ships four failing tests and an unimplemented function, so a

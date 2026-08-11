@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use forge_core::events::EventSink;
-use forge_core::ids::{RunId, TaskId};
+use forge_core::ids::TaskId;
 use forge_core::result::{CheckResult, EvaluatorKind};
 use forge_core::run::PatchSummary;
 use forge_core::task::{EngineeringTask, EvaluationSpec};
@@ -30,7 +30,6 @@ use crate::error::EvalResult;
 ///
 /// Notably absent: the agent's own report of what it did.
 pub struct EvaluationContext<'a> {
-    pub run_id: &'a RunId,
     pub task_id: &'a TaskId,
     pub repository: &'a str,
     pub base_commit: &'a str,
@@ -57,7 +56,6 @@ impl<'a> EvaluationContext<'a> {
         events: &'a dyn EventSink,
     ) -> Self {
         Self {
-            run_id: &workspace.run_id,
             task_id: &task.task_id,
             repository: &task.repository,
             base_commit: &workspace.base_commit,

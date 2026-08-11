@@ -12,6 +12,7 @@ pub mod error;
 pub mod experience;
 pub mod routing;
 pub mod sqlite;
+pub mod team;
 
 pub use error::{StoreError, StoreResult};
 pub use experience::{

@@ -1,14 +1,10 @@
 [package]
-name = "forge-cli"
-description = "Command-line interface for Forge."
+name = "forge-team"
+description = "Provider-agnostic DAG planning and multi-agent execution for Forge."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-
-[[bin]]
-name = "forge"
-path = "src/main.rs"
 
 [dependencies]
 forge-agent.workspace = true
@@ -16,18 +12,18 @@ forge-core.workspace = true
 forge-eval.workspace = true
 forge-executor.workspace = true
 forge-git.workspace = true
-forge-runner.workspace = true
 forge-router.workspace = true
+forge-runner.workspace = true
 forge-store.workspace = true
-forge-team.workspace = true
 
-anyhow.workspace = true
+async-trait.workspace = true
 chrono.workspace = true
-clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
-tokio.workspace = true
-tracing.workspace = true
-tracing-subscriber.workspace = true
+serde_yaml_ng.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+tokio.workspace = true

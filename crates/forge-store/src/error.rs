@@ -49,6 +49,52 @@ pub enum StoreError {
         attempted: String,
     },
 
+    #[error(
+        "team execution `{team_execution_id}` is bound to immutable plan `{existing}` and cannot be rewritten as `{attempted}`"
+    )]
+    TeamPlanConflict {
+        team_execution_id: String,
+        existing: String,
+        attempted: String,
+    },
+
+    #[error("completed team execution `{team_execution_id}` is immutable")]
+    TeamExecutionFinalized { team_execution_id: String },
+
+    #[error("the run evaluation table cannot store team evaluation `{team_execution_id}`")]
+    TeamEvaluationInRunTable { team_execution_id: String },
+
+    #[error("evaluation event subject `{subject}` does not match run envelope `{run_id}`")]
+    EvaluationEventSubjectConflict { run_id: String, subject: String },
+
+    #[error(
+        "evaluation event subject `{subject}` does not match team envelope `{team_execution_id}`"
+    )]
+    TeamEvaluationEventSubjectConflict {
+        team_execution_id: String,
+        subject: String,
+    },
+
+    #[error(
+        "team node attempt `{team_execution_id}/{node_id}/{attempt}` is already linked to run `{existing}` and cannot be changed to `{attempted}`"
+    )]
+    TeamRunLinkConflict {
+        team_execution_id: String,
+        node_id: String,
+        attempt: u64,
+        existing: String,
+        attempted: String,
+    },
+
+    #[error(
+        "team artifact `{artifact_id}` already has content hash `{existing}` and cannot be rewritten as `{attempted}`"
+    )]
+    TeamArtifactConflict {
+        artifact_id: String,
+        existing: String,
+        attempted: String,
+    },
+
     #[error("{context}")]
     Io {
         context: String,

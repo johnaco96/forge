@@ -140,6 +140,21 @@ define_id!(
     "RD"
 );
 define_id!(
+    /// Identifies one multi-agent orchestration, e.g. `TE-0001`.
+    TeamExecutionId,
+    "TE"
+);
+define_id!(
+    /// Identifies one node in a validated team plan.
+    TeamNodeId,
+    "TN"
+);
+define_id!(
+    /// Identifies one immutable team handoff artifact.
+    TeamArtifactId,
+    "TA"
+);
+define_id!(
     /// Identifies an agent as Forge knows it, e.g. `claude` or `codex`.
     AgentId,
     "A"
@@ -155,6 +170,9 @@ mod tests {
         assert_eq!(TaskId::sequential(1042).as_str(), "T-1042");
         assert_eq!(ExperimentId::sequential(2).as_str(), "E-0002");
         assert_eq!(RoutingDecisionId::sequential(3).as_str(), "RD-0003");
+        assert_eq!(TeamExecutionId::sequential(4).as_str(), "TE-0004");
+        assert_eq!(TeamNodeId::sequential(5).as_str(), "TN-0005");
+        assert_eq!(TeamArtifactId::sequential(6).as_str(), "TA-0006");
     }
 
     #[test]

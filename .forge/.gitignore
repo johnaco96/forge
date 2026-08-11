@@ -2,6 +2,7 @@
 # Configuration and task definitions are tracked; run output is not.
 worktrees/
 runs/
+teams/
 forge.db
 forge.db-wal
 forge.db-shm

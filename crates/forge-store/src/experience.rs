@@ -1963,9 +1963,9 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        // Opening with current Forge applies the Phase 4 migrations to the
-        // Phase 3 file; no
-        // rebuild or data rewrite is required.
+        // Opening with current Forge applies the Phase 4 and Phase 5
+        // migrations to the Phase 3 file; no rebuild or data rewrite is
+        // required.
         let migrated = Store::open(&database).await.unwrap();
         let history = migrated
             .history(&HistoryFilter {
@@ -1994,6 +1994,13 @@ mod tests {
         assert_eq!(
             migrated.export_records().await.unwrap()[0].selection_source,
             SelectionSource::Manual
+        );
+        assert!(
+            migrated
+                .teams_for_task(&TaskRevisionId::from_stored("legacy:T-2000").unwrap())
+                .await
+                .unwrap()
+                .is_empty()
         );
     }
 

@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::events::EvaluationSubject;
 use crate::ids::RunId;
 
 /// Provider-agnostic evaluator category.
@@ -446,10 +447,10 @@ pub struct EvaluationSummary {
     pub metric_count: usize,
 }
 
-/// Forge's judgment of one run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Forge's judgment of one independently evaluated candidate state.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Evaluation {
-    pub run_id: RunId,
+    pub subject: EvaluationSubject,
     pub verdict: Verdict,
     pub checks: Vec<CheckResult>,
     /// Normalized axes, populated only where there is evidence for them.
@@ -462,14 +463,69 @@ pub struct Evaluation {
     pub finished_at: DateTime<Utc>,
 }
 
+impl<'de> Deserialize<'de> for Evaluation {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireEvaluation {
+            #[serde(default)]
+            subject: Option<EvaluationSubject>,
+            #[serde(default)]
+            run_id: Option<RunId>,
+            verdict: Verdict,
+            checks: Vec<CheckResult>,
+            #[serde(default)]
+            dimensions: BTreeMap<Dimension, Score>,
+            #[serde(default)]
+            metrics: Vec<Metric>,
+            started_at: DateTime<Utc>,
+            finished_at: DateTime<Utc>,
+        }
+
+        let wire = WireEvaluation::deserialize(deserializer)?;
+        let legacy_subject = wire.run_id.map(EvaluationSubject::Run);
+        let subject = match (wire.subject, legacy_subject) {
+            (Some(subject), Some(legacy)) if subject != legacy => {
+                return Err(serde::de::Error::custom(
+                    "evaluation subject conflicts with legacy run_id",
+                ));
+            }
+            (Some(subject), _) | (None, Some(subject)) => subject,
+            (None, None) => {
+                return Err(serde::de::Error::missing_field("subject"));
+            }
+        };
+        Ok(Self {
+            subject,
+            verdict: wire.verdict,
+            checks: wire.checks,
+            dimensions: wire.dimensions,
+            metrics: wire.metrics,
+            started_at: wire.started_at,
+            finished_at: wire.finished_at,
+        })
+    }
+}
+
 impl Evaluation {
     /// Aggregates checks into an evaluation.
     ///
     /// The verdict is deliberately pessimistic: any failing check fails the
-    /// evaluation, and an inconclusive check prevents a clean pass. A run whose
-    /// evidence is incomplete must not read as verified.
+    /// evaluation, and an inconclusive check prevents a clean pass. A candidate
+    /// whose evidence is incomplete must not read as verified.
     pub fn from_checks(
         run_id: RunId,
+        checks: Vec<CheckResult>,
+        started_at: DateTime<Utc>,
+        finished_at: DateTime<Utc>,
+    ) -> Self {
+        Self::from_subject_checks(run_id.into(), checks, started_at, finished_at)
+    }
+
+    pub fn from_subject_checks(
+        subject: EvaluationSubject,
         checks: Vec<CheckResult>,
         started_at: DateTime<Utc>,
         finished_at: DateTime<Utc>,
@@ -493,7 +549,7 @@ impl Evaluation {
         let metrics = checks.iter().flat_map(|c| c.metrics.clone()).collect();
 
         Self {
-            run_id,
+            subject,
             verdict,
             checks,
             dimensions: BTreeMap::new(),
@@ -603,6 +659,26 @@ mod tests {
         assert_eq!(eval.verdict, Verdict::Pass);
         assert_eq!(eval.summary().optional_count, 1);
         assert_eq!(eval.summary().failed, 1);
+    }
+
+    #[test]
+    fn legacy_run_only_evaluations_deserialize_as_run_subjects() {
+        let now = Utc::now();
+        let legacy = serde_json::json!({
+            "run_id": "R-0042",
+            "verdict": "inconclusive",
+            "checks": [],
+            "started_at": now,
+            "finished_at": now
+        });
+        let evaluation: Evaluation = serde_json::from_value(legacy).unwrap();
+        assert_eq!(
+            evaluation.subject,
+            EvaluationSubject::Run(RunId::sequential(42))
+        );
+        let current = serde_json::to_value(evaluation).unwrap();
+        assert!(current.get("run_id").is_none());
+        assert_eq!(current["subject"]["kind"], "run");
     }
 
     #[test]

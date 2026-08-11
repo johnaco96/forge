@@ -99,6 +99,29 @@ pub struct RoutingConfig {
     pub periodic_competition_interval: u64,
 }
 
+/// Deliberately small controls for the deterministic Phase 5 scheduler.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TeamConfig {
+    #[serde(default = "default_team_parallel_nodes")]
+    pub max_parallel_nodes: u64,
+    #[serde(default)]
+    pub stop_on_required_node_failure: bool,
+}
+
+impl Default for TeamConfig {
+    fn default() -> Self {
+        Self {
+            max_parallel_nodes: 1,
+            stop_on_required_node_failure: false,
+        }
+    }
+}
+
+fn default_team_parallel_nodes() -> u64 {
+    1
+}
+
 fn default_minimum_score_margin() -> f64 {
     0.05
 }
@@ -192,6 +215,8 @@ pub struct ForgeConfig {
     pub defaults: DefaultsConfig,
     #[serde(default)]
     pub routing: RoutingConfig,
+    #[serde(default)]
+    pub team: TeamConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, AgentSettings>,
 }
@@ -216,6 +241,7 @@ impl ForgeConfig {
                 timeout_secs: 3600,
             },
             routing: RoutingConfig::default(),
+            team: TeamConfig::default(),
             agents: BTreeMap::new(),
         }
     }
@@ -338,6 +364,12 @@ impl ForgeConfig {
                 "routing.periodic_competition_interval must be greater than zero".into(),
             ));
         }
+        if self.team.max_parallel_nodes != 1 {
+            return Err(ConfigError::Invalid(
+                "team.max_parallel_nodes must be 1; the Phase 5 scheduler is deterministic and sequential"
+                    .into(),
+            ));
+        }
         Ok(())
     }
 
@@ -384,6 +416,11 @@ impl ForgeConfig {
              prior_alpha = {prior_alpha}\n\
              prior_beta = {prior_beta}\n\
              \n\
+             [team]\n\
+             # Phase 5 executes ready nodes in deterministic topological order.\n\
+             max_parallel_nodes = {team_parallel}\n\
+             stop_on_required_node_failure = {team_stop}\n\
+             \n\
              # Per-agent overrides. Unrecognized keys are passed to the adapter.\n\
              # [agents.claude]\n\
              # executable = \"claude\"\n\
@@ -404,6 +441,8 @@ impl ForgeConfig {
             periodic_interval = default.routing.periodic_competition_interval,
             prior_alpha = default.routing.baseline.prior_alpha,
             prior_beta = default.routing.baseline.prior_beta,
+            team_parallel = default.team.max_parallel_nodes,
+            team_stop = default.team.stop_on_required_node_failure,
             exploration = match default.routing.exploration_policy {
                 ExplorationPolicy::None => "none",
                 ExplorationPolicy::CompeteWhenUncertain => "compete_when_uncertain",
@@ -443,6 +482,11 @@ impl Layout {
 
     pub fn runs_dir(&self) -> PathBuf {
         self.forge_dir().join("runs")
+    }
+
+    /// Artifacts produced by team-scoped integration and final evaluation.
+    pub fn teams_dir(&self) -> PathBuf {
+        self.forge_dir().join("teams")
     }
 
     /// Artifact directory for one run: captured output, diffs, trajectory.

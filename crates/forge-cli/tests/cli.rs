@@ -79,6 +79,7 @@ fn init_creates_the_documented_layout() {
         ".forge/tasks/example.yaml",
         ".forge/.gitignore",
         ".forge/forge.db",
+        ".forge/teams",
     ] {
         assert!(
             fixture.repo.join(path).exists(),
@@ -112,6 +113,7 @@ fn init_keeps_run_output_out_of_version_control() {
     // Stand-ins for what a real run leaves behind. Git does not report empty
     // directories, so the ignore rules are only exercised once files exist.
     std::fs::write(fixture.repo.join(".forge/runs/R-0001.log"), "output").unwrap();
+    std::fs::write(fixture.repo.join(".forge/teams/TE-0001.diff"), "output").unwrap();
     std::fs::create_dir_all(fixture.repo.join(".forge/worktrees/R-0001")).unwrap();
     std::fs::write(
         fixture.repo.join(".forge/worktrees/R-0001/scratch.rs"),
@@ -135,6 +137,7 @@ fn init_keeps_run_output_out_of_version_control() {
     // ...and everything a run produces is not.
     assert!(!status.contains("worktrees"), "{status}");
     assert!(!status.contains("runs/"), "{status}");
+    assert!(!status.contains("teams/"), "{status}");
     assert!(!status.contains("forge.db"), "{status}");
 }
 

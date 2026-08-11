@@ -20,6 +20,7 @@ forge-eval = { path = "crates/forge-eval" }
 forge-runner = { path = "crates/forge-runner" }
 forge-router = { path = "crates/forge-router" }
 forge-store = { path = "crates/forge-store" }
+forge-team = { path = "crates/forge-team" }
 
 anyhow = "1"
 async-trait = "0.1"

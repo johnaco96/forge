@@ -106,7 +106,7 @@ evaluators still run in every case.
 ## Trust and security
 
 The task configuration is loaded and validated outside the candidate worktree,
-and the plan is resolved before agent execution. Evaluators receive trusted run,
+and the plan is resolved before agent execution. Evaluators receive trusted
 task, repository, base-commit, workspace, patch, configuration, artifact,
 process-runner, and timeout context. They never reread a task definition written
 by the candidate.
@@ -119,4 +119,10 @@ commands you are willing to run as the invoking user.
 The SQLite ledger stores complete typed results plus normalized rows in
 `evaluator_results` and raw measurements in `metrics`. Lifecycle events include
 `EvaluationStarted`, `EvaluatorStarted`, `EvaluatorCompleted` or
-`EvaluatorFailed`, and `EvaluationCompleted`.
+`EvaluatorFailed`, and `EvaluationCompleted`. Every lifecycle event carries a
+typed `EvaluationSubject`: `Run(RunId)` for an ordinary run or
+`TeamExecution(TeamExecutionId)` for the independent evaluation of an
+integrated team candidate. Legacy run events without the field are read as a
+`Run` subject using their existing run envelope. Run lifecycle payloads remain
+in the existing `events` table; team-final lifecycle payloads use the existing
+`team_events` table, so this abstraction requires no schema migration.

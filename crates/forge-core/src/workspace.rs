@@ -23,11 +23,14 @@ pub enum WorkspaceKind {
     Container,
 }
 
-/// One agent's isolated checkout for one run.
+/// One isolated checkout. Agent workspaces belong to a run; Forge may also
+/// create a detached workspace solely to evaluate an integrated candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
-    /// The run this workspace belongs to; workspaces are never shared.
-    pub run_id: RunId,
+    /// The run this workspace belongs to, absent only for a Forge-owned final
+    /// evaluation workspace that never executes an agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<RunId>,
     pub kind: WorkspaceKind,
     /// Absolute path to the workspace root.
     pub path: PathBuf,
@@ -46,7 +49,22 @@ impl Workspace {
         base_commit: impl Into<String>,
     ) -> Self {
         Self {
-            run_id,
+            run_id: Some(run_id),
+            kind,
+            path,
+            branch: branch.into(),
+            base_commit: base_commit.into(),
+        }
+    }
+
+    pub fn for_evaluation(
+        kind: WorkspaceKind,
+        path: PathBuf,
+        branch: impl Into<String>,
+        base_commit: impl Into<String>,
+    ) -> Self {
+        Self {
+            run_id: None,
             kind,
             path,
             branch: branch.into(),

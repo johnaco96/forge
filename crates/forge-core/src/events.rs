@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{RunId, TaskId};
+use crate::ids::{RunId, TaskId, TeamExecutionId};
 use crate::result::{Dimension, EvaluatorExecutionStatus, EvaluatorKind, Verdict};
 use crate::run::{AgentExecutionStatus, RunOutcome};
 
@@ -20,7 +20,7 @@ use crate::run::{AgentExecutionStatus, RunOutcome};
 ///
 /// Serializes to the documented shape:
 /// `{"run_id": ..., "timestamp": ..., "event_type": ..., "data": {...}}`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Event {
     pub run_id: RunId,
     /// Monotonic per run. Timestamps can collide at millisecond resolution;
@@ -35,6 +35,85 @@ pub struct Event {
 impl Event {
     pub fn event_type(&self) -> &'static str {
         self.payload.event_type()
+    }
+
+    /// Reconstructs a stored run event, supplying the truthful run subject to
+    /// legacy evaluation lifecycle payloads that predate `EvaluationSubject`.
+    pub fn from_run_parts(
+        run_id: RunId,
+        seq: u64,
+        timestamp: DateTime<Utc>,
+        mut payload: serde_json::Value,
+    ) -> serde_json::Result<Self> {
+        add_legacy_run_subject(&mut payload, &run_id);
+        Ok(Self {
+            run_id,
+            seq,
+            timestamp,
+            payload: serde_json::from_value(payload)?,
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for Event {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireEvent {
+            run_id: RunId,
+            #[serde(default)]
+            seq: u64,
+            timestamp: DateTime<Utc>,
+            #[serde(flatten)]
+            payload: BTreeMap<String, serde_json::Value>,
+        }
+
+        let wire = WireEvent::deserialize(deserializer)?;
+        Self::from_run_parts(
+            wire.run_id,
+            wire.seq,
+            wire.timestamp,
+            serde_json::Value::Object(wire.payload.into_iter().collect()),
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+/// The real object whose candidate state Forge independently evaluates.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
+pub enum EvaluationSubject {
+    Run(RunId),
+    TeamExecution(TeamExecutionId),
+}
+
+impl EvaluationSubject {
+    pub fn run_id(&self) -> Option<&RunId> {
+        match self {
+            Self::Run(run_id) => Some(run_id),
+            Self::TeamExecution(_) => None,
+        }
+    }
+
+    pub fn team_execution_id(&self) -> Option<&TeamExecutionId> {
+        match self {
+            Self::Run(_) => None,
+            Self::TeamExecution(team_execution_id) => Some(team_execution_id),
+        }
+    }
+}
+
+impl From<RunId> for EvaluationSubject {
+    fn from(run_id: RunId) -> Self {
+        Self::Run(run_id)
+    }
+}
+
+impl From<TeamExecutionId> for EvaluationSubject {
+    fn from(team_execution_id: TeamExecutionId) -> Self {
+        Self::TeamExecution(team_execution_id)
     }
 }
 
@@ -119,9 +198,11 @@ pub enum EventPayload {
         diff_path: Option<PathBuf>,
     },
     EvaluationStarted {
+        subject: EvaluationSubject,
         evaluators: Vec<String>,
     },
     EvaluatorStarted {
+        subject: EvaluationSubject,
         evaluator_id: String,
         kind: EvaluatorKind,
         required: bool,
@@ -129,6 +210,7 @@ pub enum EventPayload {
         command: Option<String>,
     },
     EvaluatorCompleted {
+        subject: EvaluationSubject,
         evaluator_id: String,
         kind: EvaluatorKind,
         verdict: Verdict,
@@ -137,12 +219,14 @@ pub enum EventPayload {
         metric_count: usize,
     },
     EvaluatorFailed {
+        subject: EvaluationSubject,
         evaluator_id: String,
         kind: EvaluatorKind,
         required: bool,
         error: String,
     },
     EvaluationCompleted {
+        subject: EvaluationSubject,
         verdict: Verdict,
     },
     RunScored {
@@ -189,6 +273,48 @@ impl EventPayload {
             Self::RunCancelled { .. } => "RunCancelled",
         }
     }
+
+    /// Present only for the independent evaluation lifecycle. Other run
+    /// trajectory events remain scoped by the ordinary `Event::run_id`.
+    pub fn evaluation_subject(&self) -> Option<&EvaluationSubject> {
+        match self {
+            Self::EvaluationStarted { subject, .. }
+            | Self::EvaluatorStarted { subject, .. }
+            | Self::EvaluatorCompleted { subject, .. }
+            | Self::EvaluatorFailed { subject, .. }
+            | Self::EvaluationCompleted { subject, .. } => Some(subject),
+            _ => None,
+        }
+    }
+}
+
+fn add_legacy_run_subject(payload: &mut serde_json::Value, run_id: &RunId) {
+    let Some(event_type) = payload
+        .get("event_type")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return;
+    };
+    if !matches!(
+        event_type,
+        "EvaluationStarted"
+            | "EvaluatorStarted"
+            | "EvaluatorCompleted"
+            | "EvaluatorFailed"
+            | "EvaluationCompleted"
+    ) {
+        return;
+    }
+    let Some(data) = payload
+        .get_mut("data")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    data.entry("subject").or_insert_with(|| {
+        serde_json::to_value(EvaluationSubject::Run(run_id.clone()))
+            .expect("evaluation subjects serialize")
+    });
 }
 
 /// Where components send events without knowing how they are persisted.
@@ -301,6 +427,28 @@ mod tests {
     }
 
     #[test]
+    fn legacy_run_only_evaluation_events_gain_their_run_subject() {
+        let raw = r#"
+        {
+          "run_id": "R-0042",
+          "seq": 7,
+          "timestamp": "2026-08-10T21:32:15Z",
+          "event_type": "EvaluationStarted",
+          "data": {"evaluators": ["tests"]}
+        }
+        "#;
+
+        let event: Event = serde_json::from_str(raw).unwrap();
+        assert_eq!(
+            event.payload.evaluation_subject(),
+            Some(&EvaluationSubject::Run(RunId::sequential(42)))
+        );
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["data"]["subject"]["kind"], "run");
+        assert_eq!(value["data"]["subject"]["id"], "R-0042");
+    }
+
+    #[test]
     fn every_variant_round_trips() {
         let payloads = vec![
             EventPayload::RunStarted {
@@ -369,15 +517,18 @@ mod tests {
                 duration_ms: 1,
             },
             EventPayload::EvaluationStarted {
+                subject: EvaluationSubject::Run(RunId::sequential(1)),
                 evaluators: vec!["tests".into()],
             },
             EventPayload::EvaluatorStarted {
+                subject: EvaluationSubject::Run(RunId::sequential(1)),
                 evaluator_id: "tests".into(),
                 kind: EvaluatorKind::Test,
                 required: true,
                 command: Some("cargo test".into()),
             },
             EventPayload::EvaluatorCompleted {
+                subject: EvaluationSubject::Run(RunId::sequential(1)),
                 evaluator_id: "tests".into(),
                 kind: EvaluatorKind::Test,
                 verdict: Verdict::Pass,
@@ -386,12 +537,14 @@ mod tests {
                 metric_count: 1,
             },
             EventPayload::EvaluatorFailed {
+                subject: EvaluationSubject::Run(RunId::sequential(1)),
                 evaluator_id: "lint".into(),
                 kind: EvaluatorKind::Lint,
                 required: false,
                 error: "could not start".into(),
             },
             EventPayload::EvaluationCompleted {
+                subject: EvaluationSubject::Run(RunId::sequential(1)),
                 verdict: Verdict::Pass,
             },
             EventPayload::RunScored {
