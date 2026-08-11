@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentConfig;
-use crate::ids::{RunId, TaskId};
+use crate::ids::{ExperimentId, RoutingDecisionId, RunId, TaskId};
 use crate::integrity::EvaluationIntegrity;
 use crate::patch::{ExcludedEntry, PatchWarning};
 use crate::result::Verdict;
@@ -65,6 +65,32 @@ impl ExecutionProvenance {
 impl std::fmt::Display for ExecutionProvenance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+/// Who selected the agent, independent of how trustworthy its execution is.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum SelectionSource {
+    #[default]
+    Manual,
+    Automatic {
+        decision_id: RoutingDecisionId,
+        router_version: String,
+        evidence_fingerprint: String,
+    },
+    Competition {
+        experiment_id: ExperimentId,
+    },
+}
+
+impl SelectionSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Automatic { .. } => "auto",
+            Self::Competition { .. } => "competition",
+        }
     }
 }
 
@@ -437,6 +463,9 @@ pub struct AgentRun {
     /// Explicit trust provenance for routing and analytical policy.
     #[serde(default)]
     pub execution_provenance: ExecutionProvenance,
+    /// Manual, automatic, or competitive selection; never execution trust.
+    #[serde(default)]
+    pub selection_source: SelectionSource,
     /// The commit every competing run for this task starts from.
     pub base_commit: String,
     pub status: RunStatus,
@@ -501,6 +530,7 @@ impl AgentRun {
             task_id,
             agent,
             execution_provenance: ExecutionProvenance::Unknown,
+            selection_source: SelectionSource::Manual,
             base_commit: base_commit.into(),
             status: RunStatus::Pending,
             created_at: Utc::now(),

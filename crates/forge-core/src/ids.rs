@@ -135,6 +135,11 @@ define_id!(
     "E"
 );
 define_id!(
+    /// Identifies one persisted automatic-routing decision.
+    RoutingDecisionId,
+    "RD"
+);
+define_id!(
     /// Identifies an agent as Forge knows it, e.g. `claude` or `codex`.
     AgentId,
     "A"
@@ -149,6 +154,7 @@ mod tests {
         assert_eq!(RunId::sequential(1).as_str(), "R-0001");
         assert_eq!(TaskId::sequential(1042).as_str(), "T-1042");
         assert_eq!(ExperimentId::sequential(2).as_str(), "E-0002");
+        assert_eq!(RoutingDecisionId::sequential(3).as_str(), "RD-0003");
     }
 
     #[test]

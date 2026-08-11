@@ -40,6 +40,15 @@ pub enum StoreError {
         attempted: String,
     },
 
+    #[error(
+        "run `{run_id}` is already recorded with `{existing}` selection and cannot be changed to `{attempted}`"
+    )]
+    SelectionSourceConflict {
+        run_id: String,
+        existing: String,
+        attempted: String,
+    },
+
     #[error("{context}")]
     Io {
         context: String,

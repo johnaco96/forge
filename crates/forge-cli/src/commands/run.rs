@@ -4,12 +4,22 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use chrono::Utc;
 use forge_agent::AgentRegistry;
+use forge_core::agent::AdapterStatus;
 use forge_core::config::{ForgeConfig, Layout};
 use forge_core::result::Verdict;
-use forge_core::run::{PatchSummary, RunOutcome};
-use forge_core::task::EngineeringTask;
+use forge_core::routing::{
+    CandidateAgentSet, MinimumRoutingEvidence, RoutingDecision, RoutingEvidencePolicy,
+    RoutingRequest,
+};
+use forge_core::run::{PatchSummary, RunOutcome, SelectionSource};
+use forge_core::task::{EngineeringTask, TaskRevision};
 use forge_git::Repository;
+use forge_router::{
+    CandidateAvailability, CandidateRequest, CandidateRequirements, ROUTER_VERSION,
+    RoutingContract, resolve_candidates,
+};
 use forge_runner::{RunReport, RunRequest, Runner};
 use forge_store::Store;
 
@@ -33,6 +43,8 @@ pub enum RunExit {
     Passed,
     /// The run completed but the outcome was not a pass.
     NotPassed,
+    /// Routing deliberately stopped before any agent execution.
+    RoutingStopped,
 }
 
 pub async fn run(args: RunArgs) -> Result<RunExit> {
@@ -49,24 +61,23 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
             anyhow!("no agent specified and no `defaults.agent` configured; pass --agent <name>")
         })?;
 
-    if agent_id == "auto" {
-        bail!(
-            "automatic agent routing is not implemented in Phase 4A; choose a registered agent explicitly"
-        );
-    }
-
     let registry = AgentRegistry::builtin();
-    if registry.get(&agent_id).is_none() {
+    if agent_id != "auto" && registry.get(&agent_id).is_none() {
         bail!("unknown agent `{agent_id}`; run `forge agent list` to see the available agents");
     }
 
     let store = Store::open(layout.store_path(&config))
         .await
         .with_context(|| format!("opening the ledger at {}", config.store.path))?;
-    let runner = Runner::new(repository, config.clone(), store);
+    let runner = Runner::new(repository, config.clone(), store.clone());
+
+    if agent_id == "auto" {
+        return run_auto(args, task, registry, runner, store, &layout, &config).await;
+    }
 
     let mut request = RunRequest::new(task.clone(), &agent_id);
     request.execution_provenance = config.execution_provenance_for(&agent_id);
+    request.selection_source = SelectionSource::Manual;
     request.base_rev = args.base.clone();
     request.timeout = args.timeout_secs.map(Duration::from_secs);
     if args.keep_workspace {
@@ -86,6 +97,181 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     } else {
         RunExit::NotPassed
     })
+}
+
+async fn run_auto(
+    args: RunArgs,
+    task: EngineeringTask,
+    registry: AgentRegistry,
+    runner: Runner,
+    store: Store,
+    layout: &Layout,
+    config: &ForgeConfig,
+) -> Result<RunExit> {
+    let mut requested = Vec::new();
+    for descriptor in registry
+        .descriptors()
+        .iter()
+        .filter(|descriptor| descriptor.adapter_status == AdapterStatus::Implemented)
+    {
+        let agent_id = descriptor.agent_id.as_str();
+        let mut candidate_request = RunRequest::new(task.clone(), agent_id);
+        candidate_request.timeout = args.timeout_secs.map(Duration::from_secs);
+        let agent_config = runner.agent_config(&candidate_request)?;
+        let adapter = registry.adapter(agent_id, &agent_config)?;
+        let configured_descriptor = adapter.descriptor();
+        if registry.availability(&configured_descriptor).is_runnable() {
+            requested.push(CandidateRequest {
+                config: agent_config,
+                availability: CandidateAvailability::Available,
+            });
+        }
+    }
+    if requested.is_empty() {
+        bail!(
+            "automatic routing found no available implemented agents; configure or install an agent, then run `forge agent list`"
+        );
+    }
+    let candidates: CandidateAgentSet = resolve_candidates(
+        registry.descriptors(),
+        requested,
+        &CandidateRequirements::default(),
+    )?;
+    let task_revision = TaskRevision::snapshot(task.clone())?;
+    let persisted_revision = store.upsert_task(&task).await?;
+    if persisted_revision != *task_revision.revision_id() {
+        bail!("the persisted task revision differs from the routing snapshot");
+    }
+    let request = RoutingRequest::new(
+        task_revision,
+        candidates,
+        RoutingEvidencePolicy::default(),
+        MinimumRoutingEvidence {
+            total: config.routing.minimum_total_evidence,
+            per_agent: config.routing.minimum_agent_evidence,
+        },
+        config.routing.exploration_policy,
+        Utc::now(),
+    );
+    let record = RoutingContract::new(store.clone())
+        .route(&request, &config.routing)
+        .await?;
+    print_routing(&record, &args.task_path);
+
+    let selected = match &record.decision {
+        RoutingDecision::Selected { agent, .. } => agent.clone(),
+        RoutingDecision::InsufficientEvidence { .. }
+        | RoutingDecision::CompeteRecommended { .. } => return Ok(RunExit::RoutingStopped),
+    };
+    let selected_id = selected.agent_id.to_string();
+    let adapter = registry.adapter(&selected_id, &selected.config)?;
+    let mut run_request = RunRequest::new(task.clone(), &selected_id);
+    run_request.execution_provenance = config.execution_provenance_for(&selected_id);
+    run_request.selection_source = SelectionSource::Automatic {
+        decision_id: record.decision_id.clone(),
+        router_version: ROUTER_VERSION.into(),
+        evidence_fingerprint: record.evidence_fingerprint.clone(),
+    };
+    run_request.base_rev = args.base;
+    run_request.timeout = args.timeout_secs.map(Duration::from_secs);
+    if args.keep_workspace {
+        run_request.keep_workspace = Some(true);
+    }
+    let report = runner.execute(run_request, adapter.as_ref()).await?;
+    store
+        .link_routing_decision_run(&record.decision_id, &report.run.run_id)
+        .await?;
+    print_report(&report, &task, &selected_id, layout, config);
+    Ok(if report.outcome().is_success() {
+        RunExit::Passed
+    } else {
+        RunExit::NotPassed
+    })
+}
+
+fn print_routing(record: &forge_core::RoutingDecisionRecord, task_path: &Path) {
+    println!("Forge routing\n");
+    println!("Task\n  {}", record.task_id);
+    println!("\nCandidates");
+    for candidate in &record.candidates {
+        println!(
+            "  {}  {}",
+            candidate.agent_id,
+            &candidate.config_fingerprint[..12]
+        );
+    }
+    let summary = match &record.decision {
+        RoutingDecision::Selected {
+            evidence_summary, ..
+        }
+        | RoutingDecision::InsufficientEvidence {
+            evidence_summary, ..
+        }
+        | RoutingDecision::CompeteRecommended {
+            evidence_summary, ..
+        } => evidence_summary,
+    };
+    println!(
+        "\nHistorical evidence\n  {} eligible runs, {} resolved across {} similar task revisions",
+        summary.eligible_runs, summary.resolved_runs, summary.similar_task_revisions
+    );
+    if !summary.excluded.is_empty() {
+        println!("\nExcluded evidence");
+        for excluded in &summary.excluded {
+            println!("  {:?}: {}", excluded.reason, excluded.count);
+        }
+    }
+    println!("\nPredicted success");
+    for score in record.decision.scores() {
+        println!(
+            "  {:<12} {:.3}  ({} pass / {} fail / {} unresolved)",
+            score.agent.agent_id,
+            score.predicted_success,
+            score.positive_count,
+            score.negative_count,
+            score.unresolved_count
+        );
+    }
+    match &record.decision {
+        RoutingDecision::Selected {
+            agent,
+            decision_margin,
+            ..
+        } => {
+            println!("\nResult\n  SELECTED {}", agent.agent_id);
+            if let Some(margin) = decision_margin {
+                println!("  score margin {margin:.3}");
+            }
+        }
+        RoutingDecision::InsufficientEvidence {
+            evidence_summary, ..
+        } => {
+            println!("\nResult\n  INSUFFICIENT EVIDENCE");
+            println!(
+                "  {} resolved; routing thresholds were not satisfied or only one candidate was available",
+                evidence_summary.resolved_runs
+            );
+        }
+        RoutingDecision::CompeteRecommended { .. } => {
+            let agents = record
+                .candidates
+                .iter()
+                .map(|candidate| candidate.agent_id.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            println!("\nResult\n  COMPETITION RECOMMENDED");
+            println!(
+                "\nSuggested command\n  forge compete {} --agents {agents}",
+                task_path.display()
+            );
+        }
+    }
+    println!(
+        "\nRouter\n  {}\n  decision {}\n  evidence {}",
+        record.router_version,
+        record.decision_id,
+        &record.evidence_fingerprint[..12]
+    );
 }
 
 pub(crate) fn resolve_repository(repo: Option<&Path>) -> Result<(Repository, Layout, ForgeConfig)> {
@@ -135,6 +321,18 @@ fn print_report(
                 format!("{}  {}", task.task_id, summarize(&task.objective))
             ),
             ("Agent", format!("{agent_id} ({})", run.agent.harness)),
+            (
+                "Selection",
+                match &run.selection_source {
+                    SelectionSource::Manual => format!("MANUAL → {agent_id}"),
+                    SelectionSource::Automatic { decision_id, .. } => {
+                        format!("AUTO → {agent_id} ({decision_id})")
+                    }
+                    SelectionSource::Competition { experiment_id } => {
+                        format!("COMPETITION → {agent_id} ({experiment_id})")
+                    }
+                }
+            ),
             ("Base commit", short(&run.base_commit)),
             (
                 "Branch",

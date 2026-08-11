@@ -144,6 +144,7 @@ impl Store {
                 provider_reported_usage: execution.usage.clone(),
                 known_cost_usd: execution.usage.cost_usd,
                 provenance: run.execution_provenance,
+                selection_source: run.selection_source.clone(),
                 experiment_id,
                 created_at: run.created_at,
             });
@@ -181,6 +182,19 @@ fn exclusion_reason(
     request: &RoutingRequest,
 ) -> Option<EvidenceExclusionReason> {
     let policy = request.evidence_policy();
+    let expected = request
+        .candidates()
+        .as_slice()
+        .iter()
+        .find(|candidate| candidate.agent_id == run.agent.agent_id)
+        .expect("routing SQL filters runs to requested candidate agents");
+    let actual_fingerprint = run.agent.fingerprint();
+    if actual_fingerprint != expected.config_fingerprint {
+        return Some(EvidenceExclusionReason::CandidateConfigurationMismatch {
+            agent_id: run.agent.agent_id.clone(),
+            config_fingerprint: actual_fingerprint,
+        });
+    }
     if !policy
         .allowed_provenance
         .contains(&run.execution_provenance)
@@ -928,5 +942,150 @@ mod tests {
             historical.task_revision_id,
             store.upsert_task(&current).await.unwrap()
         );
+    }
+
+    #[tokio::test]
+    async fn imported_history_obeys_policy_and_candidate_configuration_is_exact() {
+        let store = Store::open_in_memory().await.unwrap();
+        let task = task("debugging", "concurrency", "Repair queue ordering");
+        let revision = TaskRevision::snapshot(task.clone()).unwrap();
+        let start = Utc::now() - TimeDelta::minutes(1);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Imported,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+
+        let default_request = request(
+            revision.clone(),
+            Utc::now(),
+            MinimumRoutingEvidence {
+                total: 1,
+                per_agent: 1,
+            },
+        );
+        let excluded = store.routing_evidence(&default_request).await.unwrap();
+        assert!(excluded.eligible.is_empty());
+        assert_eq!(
+            excluded.excluded[0].reason,
+            EvidenceExclusionReason::ImportedProvenance
+        );
+
+        let mut imported_policy = RoutingEvidencePolicy::default();
+        imported_policy
+            .allowed_provenance
+            .insert(ExecutionProvenance::Imported);
+        let imported_request = RoutingRequest::new(
+            revision.clone(),
+            candidates(),
+            imported_policy,
+            MinimumRoutingEvidence {
+                total: 1,
+                per_agent: 1,
+            },
+            ExplorationPolicy::None,
+            Utc::now(),
+        );
+        assert_eq!(
+            store
+                .routing_evidence(&imported_request)
+                .await
+                .unwrap()
+                .eligible
+                .len(),
+            1
+        );
+
+        let mut changed_alpha = config("alpha");
+        changed_alpha.model = Some("new-alpha-model".into());
+        let changed_candidates = CandidateAgentSet::new(vec![
+            CandidateAgent::new(AgentId::new("alpha").unwrap(), changed_alpha).unwrap(),
+            CandidateAgent::new(AgentId::new("beta").unwrap(), config("beta")).unwrap(),
+        ])
+        .unwrap();
+        let changed_request = RoutingRequest::new(
+            revision,
+            changed_candidates,
+            imported_request.evidence_policy().clone(),
+            MinimumRoutingEvidence {
+                total: 1,
+                per_agent: 1,
+            },
+            ExplorationPolicy::None,
+            Utc::now(),
+        );
+        let changed = store.routing_evidence(&changed_request).await.unwrap();
+        assert!(changed.eligible.is_empty());
+        assert!(matches!(
+            &changed.excluded[0].reason,
+            EvidenceExclusionReason::CandidateConfigurationMismatch { agent_id, .. }
+                if agent_id.as_str() == "alpha"
+        ));
+    }
+
+    #[tokio::test]
+    async fn evidence_added_after_cutoff_cannot_change_the_snapshot() {
+        let store = Store::open_in_memory().await.unwrap();
+        let task = task("debugging", "concurrency", "Repair queue ordering");
+        let revision = TaskRevision::snapshot(task.clone()).unwrap();
+        let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+        let routing = request(
+            revision,
+            start + TimeDelta::minutes(1),
+            MinimumRoutingEvidence {
+                total: 1,
+                per_agent: 1,
+            },
+        );
+        let before = store.routing_evidence(&routing).await.unwrap();
+
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 2,
+                agent: "beta",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Failed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start + TimeDelta::minutes(2),
+        )
+        .await;
+        let after = store.routing_evidence(&routing).await.unwrap();
+        assert_eq!(before, after);
+        assert_eq!(after.snapshot.eligible_run_ids, vec![RunId::sequential(1)]);
     }
 }

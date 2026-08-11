@@ -188,10 +188,10 @@ without silently producing enormous records.
 
 ## Phase boundary
 
-Phase 3 makes historical evidence retrievable and inspectable. Phase 4A adds a
-separate conservative routing-evidence policy over that ledger; synthetic and
-unknown evidence remain queryable here but are excluded from production routing
-by default. See [`routing.md`](routing.md). Forge still does not add `--agent
-auto`, performance recommendations, learned routing, automatic task
+Phase 3 makes historical evidence retrievable and inspectable. Phase 4 adds a
+separate conservative routing-evidence policy and deterministic baseline over
+that ledger; synthetic and unknown evidence remain queryable here but are
+excluded from production routing by default. See [`routing.md`](routing.md).
+Forge still does not add performance recommendations, automatic task
 classification, multi-agent teamwork, PostgreSQL, a graph database, or a web
 dashboard.

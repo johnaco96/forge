@@ -11,9 +11,14 @@ use chrono::{DateTime, Utc};
 use forge_core::agent::{AgentConfig, AgentDescriptor};
 use forge_core::events::Event;
 use forge_core::experiment::{Experiment, ExperimentEvent};
-use forge_core::ids::{ExperimentId, RunId, TaskId};
+use forge_core::ids::{ExperimentId, RoutingDecisionId, RunId, TaskId};
 use forge_core::result::{Evaluation, Verdict};
-use forge_core::run::{AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus};
+use forge_core::routing::{
+    RoutingDecision, RoutingDecisionKind, RoutingDecisionRecord, RoutingEvent, RoutingEventPayload,
+};
+use forge_core::run::{
+    AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus, SelectionSource,
+};
 use forge_core::task::{EngineeringTask, TaskRevisionId};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
@@ -24,6 +29,7 @@ use crate::error::{StoreError, StoreResult};
 const RUN_COUNTER: &str = "run";
 /// Counter name used to allocate experiment ids.
 const EXPERIMENT_COUNTER: &str = "experiment";
+const ROUTING_DECISION_COUNTER: &str = "routing_decision";
 
 /// A run as it appears in listings.
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +118,147 @@ impl Store {
         Ok(ExperimentId::sequential(
             self.next_counter(EXPERIMENT_COUNTER).await?,
         ))
+    }
+
+    pub async fn next_routing_decision_id(&self) -> StoreResult<RoutingDecisionId> {
+        Ok(RoutingDecisionId::sequential(
+            self.next_counter(ROUTING_DECISION_COUNTER).await?,
+        ))
+    }
+
+    pub async fn save_routing_decision(&self, record: &RoutingDecisionRecord) -> StoreResult<()> {
+        let (kind, eligible) = match &record.decision {
+            RoutingDecision::Selected {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::Selected,
+                evidence_summary.eligible_runs,
+            ),
+            RoutingDecision::InsufficientEvidence {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::InsufficientEvidence,
+                evidence_summary.eligible_runs,
+            ),
+            RoutingDecision::CompeteRecommended {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::CompeteRecommended,
+                evidence_summary.eligible_runs,
+            ),
+        };
+        sqlx::query(
+            "INSERT INTO routing_decisions (
+                 decision_id, run_id, task_id, task_revision_id, created_at, decision_kind,
+                 selected_agent_id, selected_config_fingerprint, router_version,
+                 evidence_policy_version, historical_cutoff, evidence_fingerprint,
+                 eligible_evidence_count, record_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT (decision_id) DO UPDATE SET
+                 run_id = COALESCE(routing_decisions.run_id, excluded.run_id),
+                 record_json = excluded.record_json",
+        )
+        .bind(record.decision_id.as_str())
+        .bind(record.run_id.as_ref().map(RunId::as_str))
+        .bind(record.task_id.as_str())
+        .bind(record.task_revision_id.as_str())
+        .bind(record.created_at.to_rfc3339())
+        .bind(routing_decision_kind(kind))
+        .bind(
+            record
+                .selected
+                .as_ref()
+                .map(|agent| agent.agent_id.as_str()),
+        )
+        .bind(
+            record
+                .selected
+                .as_ref()
+                .map(|agent| agent.config_fingerprint.as_str()),
+        )
+        .bind(&record.router_version)
+        .bind(&record.evidence_policy_version.0)
+        .bind(record.historical_cutoff.to_rfc3339())
+        .bind(&record.evidence_fingerprint)
+        .bind(eligible as i64)
+        .bind(serde_json::to_string(record)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn link_routing_decision_run(
+        &self,
+        decision_id: &RoutingDecisionId,
+        run_id: &RunId,
+    ) -> StoreResult<()> {
+        let json: Option<String> =
+            sqlx::query_scalar("SELECT record_json FROM routing_decisions WHERE decision_id = ?1")
+                .bind(decision_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        let mut record: RoutingDecisionRecord =
+            serde_json::from_str(&json.ok_or_else(|| {
+                StoreError::NotFound(format!("routing decision `{decision_id}`"))
+            })?)?;
+        record.run_id = Some(run_id.clone());
+        sqlx::query(
+            "UPDATE routing_decisions SET run_id = ?2, record_json = ?3 WHERE decision_id = ?1",
+        )
+        .bind(decision_id.as_str())
+        .bind(run_id.as_str())
+        .bind(serde_json::to_string(&record)?)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    pub async fn load_routing_decision(
+        &self,
+        decision_id: &RoutingDecisionId,
+    ) -> StoreResult<Option<RoutingDecisionRecord>> {
+        let json: Option<String> =
+            sqlx::query_scalar("SELECT record_json FROM routing_decisions WHERE decision_id = ?1")
+                .bind(decision_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    pub async fn append_routing_events(&self, events: &[RoutingEvent]) -> StoreResult<()> {
+        for event in events {
+            sqlx::query(
+                "INSERT INTO routing_decision_events (
+                    decision_id, seq, timestamp, event_type, data_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (decision_id, seq) DO NOTHING",
+            )
+            .bind(event.decision_id.as_str())
+            .bind(event.seq as i64)
+            .bind(event.timestamp.to_rfc3339())
+            .bind(routing_event_type(&event.payload))
+            .bind(serde_json::to_string(event)?)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn routing_events_for(
+        &self,
+        decision_id: &RoutingDecisionId,
+    ) -> StoreResult<Vec<RoutingEvent>> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT data_json FROM routing_decision_events
+             WHERE decision_id = ?1 ORDER BY seq",
+        )
+        .bind(decision_id.as_str())
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .collect()
     }
 
     async fn next_counter(&self, name: &str) -> StoreResult<u64> {
@@ -400,16 +547,31 @@ impl Store {
                 attempted: run.execution_provenance.to_string(),
             });
         }
+        let existing_selection: Option<String> =
+            sqlx::query_scalar("SELECT selection_source FROM runs WHERE run_id = ?1")
+                .bind(run.run_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        if existing_selection
+            .as_deref()
+            .is_some_and(|existing| existing != run.selection_source.as_str())
+        {
+            return Err(StoreError::SelectionSourceConflict {
+                run_id: run.run_id.to_string(),
+                existing: existing_selection.unwrap_or_default(),
+                attempted: run.selection_source.as_str().into(),
+            });
+        }
         let fingerprint = self.upsert_agent_config(&run.agent).await?;
         sqlx::query(
             "INSERT INTO runs (
                  run_id, task_id, agent_id, config_fingerprint, experiment_id, base_commit, status,
                  created_at, started_at, finished_at, exit_code, failure_reason, workspace_path,
                  input_tokens, output_tokens, cost_usd, record_json, agent_status, outcome, branch,
-                 task_revision_id, execution_provenance
+                 task_revision_id, execution_provenance, selection_source, routing_decision_id
              ) VALUES (
                  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21, ?22
+                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
              )
              ON CONFLICT (run_id) DO UPDATE SET
                  status = excluded.status,
@@ -453,6 +615,11 @@ impl Store {
         .bind(run.branch.as_deref())
         .bind(resolved_revision.as_str())
         .bind(run.execution_provenance.as_str())
+        .bind(run.selection_source.as_str())
+        .bind(match &run.selection_source {
+            SelectionSource::Automatic { decision_id, .. } => Some(decision_id.as_str()),
+            _ => None,
+        })
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -564,16 +731,25 @@ impl Store {
     }
 
     pub async fn load_run(&self, run_id: &RunId) -> StoreResult<Option<AgentRun>> {
-        let row =
-            sqlx::query("SELECT record_json, execution_provenance FROM runs WHERE run_id = ?1")
-                .bind(run_id.as_str())
-                .fetch_optional(&self.pool)
-                .await?;
+        let row = sqlx::query(
+            "SELECT record_json, execution_provenance, selection_source
+             FROM runs WHERE run_id = ?1",
+        )
+        .bind(run_id.as_str())
+        .fetch_optional(&self.pool)
+        .await?;
         row.map(|row| {
             let mut run: AgentRun =
                 serde_json::from_str(&row.try_get::<String, _>("record_json")?)?;
             run.execution_provenance =
                 parse_enum(&row.try_get::<String, _>("execution_provenance")?)?;
+            let stored_selection: String = row.try_get("selection_source")?;
+            if stored_selection != run.selection_source.as_str() {
+                return Err(StoreError::Corrupt(format!(
+                    "run `{}` selection source differs between indexed and complete records",
+                    run.run_id
+                )));
+            }
             Ok(run)
         })
         .transpose()
@@ -806,6 +982,24 @@ impl Store {
             .fetch_one(&self.pool)
             .await?;
         Ok(count as u64)
+    }
+}
+
+fn routing_decision_kind(kind: RoutingDecisionKind) -> &'static str {
+    match kind {
+        RoutingDecisionKind::Selected => "selected",
+        RoutingDecisionKind::InsufficientEvidence => "insufficient_evidence",
+        RoutingDecisionKind::CompeteRecommended => "compete_recommended",
+    }
+}
+
+fn routing_event_type(payload: &RoutingEventPayload) -> &'static str {
+    match payload {
+        RoutingEventPayload::RoutingStarted { .. } => "routing_started",
+        RoutingEventPayload::RoutingEvidenceResolved { .. } => "routing_evidence_resolved",
+        RoutingEventPayload::RoutingDecisionMade { .. } => "routing_decision_made",
+        RoutingEventPayload::RoutingInsufficientEvidence => "routing_insufficient_evidence",
+        RoutingEventPayload::RoutingCompetitionRecommended => "routing_competition_recommended",
     }
 }
 
@@ -1429,6 +1623,31 @@ mod tests {
                 .unwrap()
                 .execution_provenance,
             ExecutionProvenance::Synthetic
+        );
+    }
+
+    #[tokio::test]
+    async fn persisted_selection_source_cannot_be_rewritten() {
+        let store = store().await;
+        store.upsert_task(&task()).await.unwrap();
+        let mut recorded = run(RunId::sequential(1));
+        store.save_run(&recorded, None).await.unwrap();
+
+        recorded.selection_source = SelectionSource::Competition {
+            experiment_id: ExperimentId::sequential(1),
+        };
+        assert!(matches!(
+            store.save_run(&recorded, None).await.unwrap_err(),
+            StoreError::SelectionSourceConflict { .. }
+        ));
+        assert_eq!(
+            store
+                .load_run(&recorded.run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .selection_source,
+            SelectionSource::Manual
         );
     }
 

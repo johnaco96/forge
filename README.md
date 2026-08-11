@@ -39,8 +39,8 @@ base commit into a comparative experiment.
 | **Codex adapter and `forge run --agent codex`** | ✅ |
 | **`forge compete task.yaml --agents claude,codex`** | ✅ |
 | **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ |
-| **Provider-agnostic routing contract and trusted evidence policy** | ✅ Phase 4A review candidate |
-| Automatic/learned routing, recommendations, teamwork | ⬜ later |
+| **Provider-agnostic historical routing and trusted evidence policy** | ✅ Phase 4B review candidate |
+| Multi-agent teamwork and later optimization | ⬜ later |
 
 ---
 
@@ -85,10 +85,10 @@ forge experiments list
 forge export --format jsonl > forge-runs.jsonl
 ```
 
-These commands describe recorded evidence. Phase 4A can also produce a trusted,
-reproducible routing-evidence snapshot internally, but does not select an agent,
-recommend one, or apply a learned routing policy. `--agent auto` explicitly
-reports that automatic routing is not implemented.
+These commands describe recorded evidence. Forge can also apply the
+deterministic `historical-baseline-v1` policy to its trusted snapshot with
+`forge run task.yaml --agent auto`. It selects only when readiness and the
+score margin permit; otherwise it stops explicitly without running an agent.
 
 To run independent attempts from one resolved base and compare their evidence
 without choosing an overall winner:
@@ -318,14 +318,19 @@ sqlite3 .forge/forge.db \
 
 ### Configuration
 
-Future routing readiness is configured conservatively, although no agent is
-automatically selected in Phase 4A:
+Historical baseline routing is configured conservatively:
 
 ```toml
 [routing]
 minimum_total_evidence = 10
 minimum_agent_evidence = 3
+minimum_score_margin = 0.05
 exploration_policy = "compete_when_uncertain"
+periodic_competition_interval = 10
+
+[routing.baseline]
+prior_alpha = 1.0
+prior_beta = 1.0
 ```
 
 ```toml
@@ -415,7 +420,7 @@ forge-cli ── forge-runner (execution pipeline)
              ├── forge-store      experience ledger
              └── forge-git        repository mechanics
 
-forge-router (future CLI/runner consumer; no selection algorithm in Phase 4A)
+forge-router (historical-baseline-v1 selection and explanation)
 └── forge-store          trusted routing evidence query
 
 All provider-agnostic domain contracts converge on forge-core.
@@ -429,7 +434,7 @@ All provider-agnostic domain contracts converge on forge-core.
 | `forge-agent` | The `AgentAdapter` interface, shared prompt contract, and provider adapters. |
 | `forge-eval` | Independent evaluation — the trust boundary. |
 | `forge-store` | The SQLite experience ledger. |
-| `forge-router` | Candidate resolution and trusted evidence boundary; no selection algorithm yet. |
+| `forge-router` | Candidate resolution, trusted evidence, and the versioned historical baseline. |
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
 | `forge-cli` | The `forge` binary. |
 

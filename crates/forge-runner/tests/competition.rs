@@ -10,7 +10,7 @@ use forge_core::agent::{AdapterStatus, AgentDescriptor};
 use forge_core::config::ForgeConfig;
 use forge_core::ids::{AgentId, TaskId};
 use forge_core::integrity::{IntegrityStatus, ProtectionPolicy};
-use forge_core::run::{AgentExecution, AgentExecutionStatus, RunOutcome, Usage};
+use forge_core::run::{AgentExecution, AgentExecutionStatus, RunOutcome, SelectionSource, Usage};
 use forge_core::task::{CommandSpec, EngineeringTask, EvaluationSpec, TaskMetadata};
 use forge_git::Repository;
 use forge_runner::{Competitor, ExperimentRequest, Runner, RunnerError};
@@ -214,6 +214,11 @@ async fn two_successful_agents_share_one_base_but_use_isolated_worktrees() {
             .all(|run| run.outcome() == RunOutcome::Passed)
     );
     assert!(report.runs.iter().all(|run| run.run.base_commit == base));
+    assert!(report.runs.iter().all(|run| matches!(
+        &run.run.selection_source,
+        SelectionSource::Competition { experiment_id }
+            if experiment_id == &report.experiment.experiment_id
+    )));
     assert_ne!(report.runs[0].branch, report.runs[1].branch);
     assert_ne!(
         report.runs[0].run.workspace_path,

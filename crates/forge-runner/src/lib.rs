@@ -50,6 +50,7 @@ use forge_core::patch::{PatchPolicy, PatchWarning};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{
     AgentExecution, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
+    SelectionSource,
 };
 use forge_core::security::SecurityPosture;
 use forge_core::task::EngineeringTask;
@@ -79,6 +80,7 @@ pub struct RunRequest {
     /// Must be asserted explicitly by the caller. The generic runner defaults
     /// to unknown rather than guessing that a custom adapter is live.
     pub execution_provenance: ExecutionProvenance,
+    pub selection_source: SelectionSource,
 }
 
 /// A base commit resolved by Forge before execution begins.
@@ -148,6 +150,7 @@ impl RunRequest {
             timeout: None,
             keep_workspace: None,
             execution_provenance: ExecutionProvenance::Unknown,
+            selection_source: SelectionSource::Manual,
         }
     }
 }
@@ -338,6 +341,9 @@ impl Runner {
             run_request.timeout = request.timeout;
             run_request.keep_workspace = request.keep_workspace;
             run_request.execution_provenance = competitor.execution_provenance;
+            run_request.selection_source = SelectionSource::Competition {
+                experiment_id: experiment_id.clone(),
+            };
 
             let result = self
                 .execute_resolved(
@@ -439,6 +445,7 @@ impl Runner {
             base_commit.as_str(),
         );
         run.execution_provenance = request.execution_provenance;
+        run.selection_source = request.selection_source.clone();
         run.security = Some(SecurityPosture::current(adapter.security()));
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());

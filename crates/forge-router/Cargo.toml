@@ -11,6 +11,7 @@ forge-core.workspace = true
 forge-store.workspace = true
 
 thiserror.workspace = true
+chrono.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

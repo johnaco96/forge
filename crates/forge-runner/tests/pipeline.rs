@@ -20,7 +20,8 @@ use forge_core::ids::{AgentId, TaskId};
 use forge_core::integrity::ProtectionPolicy;
 use forge_core::result::{EvaluatorKind, Verdict};
 use forge_core::run::{
-    AgentExecution, AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus, Usage,
+    AgentExecution, AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus,
+    SelectionSource, Usage,
 };
 use forge_core::task::{
     BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskMetadata,
@@ -343,6 +344,7 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     let stored = store.load_run(&report.run.run_id).await.unwrap().unwrap();
     assert_eq!(stored.outcome, Some(RunOutcome::Passed));
     assert_eq!(stored.execution_provenance, ExecutionProvenance::Synthetic);
+    assert_eq!(stored.selection_source, SelectionSource::Manual);
     let evaluation = store
         .load_evaluation(&report.run.run_id)
         .await

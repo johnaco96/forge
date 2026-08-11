@@ -17,6 +17,7 @@ forge-eval.workspace = true
 forge-executor.workspace = true
 forge-git.workspace = true
 forge-runner.workspace = true
+forge-router.workspace = true
 forge-store.workspace = true
 
 anyhow.workspace = true

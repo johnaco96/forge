@@ -33,7 +33,8 @@ pub mod workspace;
 
 pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
 pub use config::{
-    AgentSettings, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout, RoutingConfig,
+    AgentSettings, BaselineRoutingConfig, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout,
+    RoutingConfig,
 };
 pub use events::{Event, EventPayload, EventSink, NullSink, RecordingSink};
 pub use experiment::{
@@ -41,7 +42,7 @@ pub use experiment::{
     Experiment, ExperimentEvent, ExperimentEventPayload, ExperimentRecordingSink, ExperimentStatus,
     PairwiseComparison,
 };
-pub use ids::{AgentId, ExperimentId, IdError, RunId, TaskId};
+pub use ids::{AgentId, ExperimentId, IdError, RoutingDecisionId, RunId, TaskId};
 pub use integrity::{
     CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,
 };
@@ -55,17 +56,19 @@ pub use result::{
     MetricValue, Score, ScoreError, Verdict,
 };
 pub use routing::{
-    AgentEvidenceCount, CandidateAgent, CandidateAgentSet, DecisionSource, EvidenceExclusionCount,
-    EvidenceExclusionReason, EvidencePolicyVersion, ExcludedRoutingEvidence, ExplorationPolicy,
-    MinimumRoutingEvidence, RoutingContractError, RoutingDecision, RoutingEvidence,
-    RoutingEvidencePolicy, RoutingEvidenceRecord, RoutingEvidenceSnapshot, RoutingEvidenceSummary,
-    RoutingExplanation, RoutingExplanationReason, RoutingFeatures, RoutingReadiness,
+    AgentEvidenceCount, AgentRoutingScore, CandidateAgent, CandidateAgentSet, DecisionSource,
+    EvidenceExclusionCount, EvidenceExclusionReason, EvidencePolicyVersion,
+    ExcludedRoutingEvidence, ExplorationPolicy, InfluentialRoutingRun, MinimumRoutingEvidence,
+    RoutingContractError, RoutingDecision, RoutingDecisionKind, RoutingDecisionRecord,
+    RoutingEvent, RoutingEventPayload, RoutingEvidence, RoutingEvidencePolicy,
+    RoutingEvidenceRecord, RoutingEvidenceSnapshot, RoutingEvidenceSummary, RoutingExplanation,
+    RoutingExplanationReason, RoutingFeatures, RoutingPolicyConfiguration, RoutingReadiness,
     RoutingReadinessReason, RoutingRequest, RoutingSuggestedAction, RoutingTarget,
     UnavailableRoutingFeature, UnavailableRoutingFeatureKind, UnresolvedRoutingTarget,
 };
 pub use run::{
     AgentExecution, AgentExecutionStatus, AgentRun, ExecutionProvenance, PatchSummary,
-    RunArtifacts, RunError, RunOutcome, RunStatus, Usage,
+    RunArtifacts, RunError, RunOutcome, RunStatus, SelectionSource, Usage,
 };
 pub use security::{AgentSecurity, HostContainment, SecurityPosture, WorkspaceIsolation};
 pub use task::{

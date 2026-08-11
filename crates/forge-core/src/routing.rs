@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::agent::AgentConfig;
-use crate::ids::{AgentId, ExperimentId, RunId, TaskId};
+use crate::ids::{AgentId, ExperimentId, RoutingDecisionId, RunId, TaskId};
 use crate::integrity::IntegrityStatus;
 use crate::result::EvaluationSummary;
-use crate::run::{AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus, Usage};
+use crate::run::{
+    AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus, SelectionSource, Usage,
+};
 use crate::task::{TaskClassification, TaskRevision, TaskRevisionId};
 
 pub const ROUTING_CONTRACT_VERSION: &str = "routing-contract-v1";
@@ -347,6 +349,7 @@ pub struct RoutingEvidenceRecord {
     pub provider_reported_usage: Usage,
     pub known_cost_usd: Option<f64>,
     pub provenance: ExecutionProvenance,
+    pub selection_source: SelectionSource,
     pub experiment_id: Option<ExperimentId>,
     pub created_at: DateTime<Utc>,
 }
@@ -357,16 +360,26 @@ pub enum EvidenceExclusionReason {
     SyntheticProvenance,
     UnknownProvenance,
     ImportedProvenance,
-    ProvenanceNotAllowed { provenance: ExecutionProvenance },
-    IncompleteRun { status: RunStatus },
+    ProvenanceNotAllowed {
+        provenance: ExecutionProvenance,
+    },
+    IncompleteRun {
+        status: RunStatus,
+    },
     InfrastructureFailure,
     MissingExecution,
     MissingOutcome,
     MissingIntegrity,
-    IntegrityViolation { status: IntegrityStatus },
+    IntegrityViolation {
+        status: IntegrityStatus,
+    },
     MissingEvaluation,
     EvaluatorInfrastructureFailure,
     InsufficientSimilarity,
+    CandidateConfigurationMismatch {
+        agent_id: AgentId,
+        config_fingerprint: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -492,6 +505,10 @@ impl RoutingEvidenceSnapshot {
             evidence_fingerprint,
         })
     }
+
+    pub fn set_routing_policy_version(&mut self, version: impl Into<String>) {
+        self.routing_policy_version = Some(version.into());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -505,7 +522,7 @@ pub struct RoutingEvidence {
 
 /// Structured explanation inputs. Rendering these is deterministic and does
 /// not require an LLM.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RoutingExplanationReason {
     EligibleEvidence {
@@ -523,6 +540,15 @@ pub enum RoutingExplanationReason {
         count: u64,
     },
     InsufficientEvidence(RoutingReadinessReason),
+    ScoreMargin {
+        actual: f64,
+        required: f64,
+    },
+    OnlyOneCandidateAvailable,
+    PeriodicCompetition {
+        resolved_observations: u64,
+        interval: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -533,11 +559,51 @@ pub enum DecisionSource {
     ManualPolicy,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoutingExplanation {
     pub source: DecisionSource,
     pub policy_version: String,
     pub reasons: Vec<RoutingExplanationReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InfluentialRoutingRun {
+    pub run_id: RunId,
+    pub task_revision_id: TaskRevisionId,
+    pub target: RoutingTarget,
+    pub similarity_weight: f64,
+    pub experiment_id: Option<ExperimentId>,
+}
+
+/// A score for one exact currently configured candidate.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentRoutingScore {
+    pub agent: CandidateAgent,
+    pub predicted_success: f64,
+    pub routing_score: f64,
+    pub resolved_evidence_count: u64,
+    pub positive_count: u64,
+    pub negative_count: u64,
+    pub unresolved_count: u64,
+    pub weighted_similarity_evidence: f64,
+    pub evidence_strength: f64,
+    pub influential_runs: Vec<InfluentialRoutingRun>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingPolicyConfiguration {
+    pub prior_alpha: f64,
+    pub prior_beta: f64,
+    pub minimum_score_margin: f64,
+    pub periodic_competition_interval: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutingDecisionKind {
+    Selected,
+    InsufficientEvidence,
+    CompeteRecommended,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -557,18 +623,95 @@ pub enum RoutingDecision {
         evidence_summary: RoutingEvidenceSummary,
         snapshot: RoutingEvidenceSnapshot,
         explanation: RoutingExplanation,
+        scores: Vec<AgentRoutingScore>,
+        decision_margin: Option<f64>,
     },
     InsufficientEvidence {
         evidence_summary: RoutingEvidenceSummary,
         snapshot: RoutingEvidenceSnapshot,
         explanation: RoutingExplanation,
         suggested_action: RoutingSuggestedAction,
+        scores: Vec<AgentRoutingScore>,
+        decision_margin: Option<f64>,
     },
     CompeteRecommended {
         evidence_summary: RoutingEvidenceSummary,
         snapshot: RoutingEvidenceSnapshot,
         explanation: RoutingExplanation,
+        scores: Vec<AgentRoutingScore>,
+        decision_margin: Option<f64>,
     },
+}
+
+impl RoutingDecision {
+    pub fn kind(&self) -> RoutingDecisionKind {
+        match self {
+            Self::Selected { .. } => RoutingDecisionKind::Selected,
+            Self::InsufficientEvidence { .. } => RoutingDecisionKind::InsufficientEvidence,
+            Self::CompeteRecommended { .. } => RoutingDecisionKind::CompeteRecommended,
+        }
+    }
+
+    pub fn snapshot(&self) -> &RoutingEvidenceSnapshot {
+        match self {
+            Self::Selected { snapshot, .. }
+            | Self::InsufficientEvidence { snapshot, .. }
+            | Self::CompeteRecommended { snapshot, .. } => snapshot,
+        }
+    }
+
+    pub fn scores(&self) -> &[AgentRoutingScore] {
+        match self {
+            Self::Selected { scores, .. }
+            | Self::InsufficientEvidence { scores, .. }
+            | Self::CompeteRecommended { scores, .. } => scores,
+        }
+    }
+}
+
+/// Complete durable answer to “why did Forge choose this at that time?”.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingDecisionRecord {
+    pub decision_id: RoutingDecisionId,
+    pub run_id: Option<RunId>,
+    pub task_id: TaskId,
+    pub task_revision_id: TaskRevisionId,
+    pub created_at: DateTime<Utc>,
+    pub candidates: Vec<CandidateAgent>,
+    pub selected: Option<CandidateAgent>,
+    pub router_version: String,
+    pub evidence_policy_version: EvidencePolicyVersion,
+    pub policy_configuration: RoutingPolicyConfiguration,
+    pub historical_cutoff: DateTime<Utc>,
+    pub evidence_fingerprint: String,
+    pub decision: RoutingDecision,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoutingEvent {
+    pub decision_id: RoutingDecisionId,
+    pub seq: u64,
+    pub timestamp: DateTime<Utc>,
+    pub payload: RoutingEventPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RoutingEventPayload {
+    RoutingStarted {
+        candidate_count: u64,
+    },
+    RoutingEvidenceResolved {
+        eligible_runs: u64,
+        excluded_runs: u64,
+        evidence_fingerprint: String,
+    },
+    RoutingDecisionMade {
+        selected_agent: AgentId,
+        margin: f64,
+    },
+    RoutingInsufficientEvidence,
+    RoutingCompetitionRecommended,
 }
 
 #[cfg(test)]

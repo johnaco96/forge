@@ -182,6 +182,38 @@ impl Fixture {
         std::fs::write(&config_path, config).unwrap();
     }
 
+    /// Configures both no-network stubs as controlled live evidence and lowers
+    /// readiness only for the compact routing smoke fixture.
+    fn use_routing_stubs(&self, claude: &StubClaude, codex: &StubCodex) {
+        let config_path = self.repo.join(".forge/config.toml");
+        let mut config = std::fs::read_to_string(&config_path).unwrap();
+        config = config.replace("minimum_total_evidence = 10", "minimum_total_evidence = 6");
+        config.push_str(&format!(
+            "\n[agents.claude]\nexecutable = \"{}\"\n\n[agents.codex]\nexecutable = \"{}\"\n",
+            claude.path.display(),
+            codex.path.display()
+        ));
+        std::fs::write(&config_path, config).unwrap();
+    }
+
+    fn set_routing_stubs_synthetic(&self, synthetic: bool) {
+        let config_path = self.repo.join(".forge/config.toml");
+        let mut config = std::fs::read_to_string(&config_path).unwrap();
+        config = config.replace("execution_provenance = \"synthetic\"\n", "");
+        if synthetic {
+            config = config
+                .replace(
+                    "\n[agents.claude]\n",
+                    "\n[agents.claude]\nexecution_provenance = \"synthetic\"\n",
+                )
+                .replace(
+                    "\n[agents.codex]\n",
+                    "\n[agents.codex]\nexecution_provenance = \"synthetic\"\n",
+                );
+        }
+        std::fs::write(&config_path, config).unwrap();
+    }
+
     fn write_task(&self, name: &str, body: &str) -> String {
         let relative = format!(".forge/tasks/{name}");
         std::fs::write(self.repo.join(&relative), body).unwrap();
@@ -609,16 +641,122 @@ fn an_unknown_agent_is_refused_with_a_pointer_to_the_listing() {
 }
 
 #[test]
-fn auto_agent_reports_that_phase_four_a_does_not_route() {
+fn auto_agent_stops_without_forcing_a_choice_when_history_is_absent() {
     let fixture = Fixture::new();
     let task = fixture.write_task("raise.yaml", &task_yaml("  tests:\n    command: true\n"));
 
     let output = fixture.forge(&["run", &task, "--agent", "auto"]);
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(3));
     assert!(
-        stderr(&output).contains("automatic agent routing is not implemented in Phase 4A"),
-        "{}",
+        stdout(&output).contains("Forge routing"),
+        "{}\n{}",
+        stdout(&output),
         stderr(&output)
+    );
+    assert!(
+        stdout(&output).contains("COMPETITION RECOMMENDED")
+            || stdout(&output).contains("INSUFFICIENT EVIDENCE"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn auto_routes_from_deterministic_history_through_the_normal_codex_pipeline() {
+    let fixture = Fixture::new();
+    let claude_state = fixture.temp.path().join("routing-claude.count");
+    let codex_state = fixture.temp.path().join("routing-codex.count");
+    let claude_body = format!(
+        "n=$(cat '{}' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '{}'; \
+         if [ $n -le 3 ]; then echo 2 > value.txt; else echo 3 > value.txt; fi",
+        claude_state.display(),
+        claude_state.display()
+    );
+    let codex_body = format!(
+        "n=$(cat '{}' 2>/dev/null || echo 0); n=$((n + 1)); echo $n > '{}'; \
+         if [ $n -le 3 ]; then echo 3 > value.txt; else echo 2 > value.txt; fi",
+        codex_state.display(),
+        codex_state.display()
+    );
+    let claude = fixture.stub_with("routing-claude", &claude_body, SUCCESS_ENVELOPE, 0);
+    let codex = fixture.codex_stub_with("routing-codex", &codex_body, CODEX_SUCCESS_STREAM, 0);
+    fixture.use_routing_stubs(&claude, &codex);
+    let task = fixture.write_task(
+        "routing.yaml",
+        "task_id: T-1042\n\
+         repository: distributed-runtime\n\
+         objective: Debug concurrent scheduler value update\n\
+         classification:\n\
+         \x20 category: debugging\n\
+         \x20 language: rust\n\
+         \x20 domain: concurrency\n\
+         \x20 difficulty: medium\n\
+         components:\n\
+         \x20 - scheduler\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+
+    // Six synthetic observations strongly favor Claude. If they leaked into
+    // production evidence, the eligible live cohort below would tie instead
+    // of selecting Codex.
+    fixture.set_routing_stubs_synthetic(true);
+    for _ in 0..3 {
+        let synthetic_claude = fixture.forge(&["run", &task, "--agent", "claude"]);
+        assert!(
+            synthetic_claude.status.success(),
+            "{}\n{}",
+            stdout(&synthetic_claude),
+            stderr(&synthetic_claude)
+        );
+        let synthetic_codex = fixture.forge(&["run", &task, "--agent", "codex"]);
+        assert_eq!(
+            synthetic_codex.status.code(),
+            Some(2),
+            "{}\n{}",
+            stdout(&synthetic_codex),
+            stderr(&synthetic_codex)
+        );
+    }
+
+    fixture.set_routing_stubs_synthetic(false);
+    for _ in 0..3 {
+        let pass = fixture.forge(&["run", &task, "--agent", "codex"]);
+        assert!(pass.status.success(), "{}", stderr(&pass));
+        let fail = fixture.forge(&["run", &task, "--agent", "claude"]);
+        assert_eq!(fail.status.code(), Some(2), "{}", stderr(&fail));
+    }
+
+    let routed = fixture.forge(&["run", &task, "--agent", "auto"]);
+    let text = stdout(&routed);
+    assert!(routed.status.success(), "{text}\n{}", stderr(&routed));
+    assert!(text.contains("SELECTED codex"), "{text}");
+    assert!(text.contains("6 eligible runs"), "{text}");
+    assert!(text.contains("SyntheticProvenance: 6"), "{text}");
+    assert!(text.contains("historical-baseline-v1"), "{text}");
+    assert!(text.contains("AUTO → codex (RD-0001)"), "{text}");
+    assert!(text.contains("Overall\n  PASS"), "{text}");
+
+    // The first auto-selected genuine run is itself eligible live evidence.
+    let repeated = fixture.forge(&["run", &task, "--agent", "auto"]);
+    assert!(repeated.status.success(), "{}", stderr(&repeated));
+    assert!(stdout(&repeated).contains("7 eligible runs"));
+
+    let export = fixture.forge(&["export", "--format", "jsonl"]);
+    let records = stdout(&export)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 14);
+    assert_eq!(records.last().unwrap()["execution_provenance"], "live");
+    assert_eq!(
+        records.last().unwrap()["selection_source"]["mode"],
+        "automatic"
+    );
+    assert_eq!(
+        records.last().unwrap()["selection_source"]["decision_id"],
+        "RD-0002"
     );
 }
 

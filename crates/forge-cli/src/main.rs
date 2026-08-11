@@ -226,6 +226,7 @@ const EXIT_FORGE_ERROR: std::process::ExitCode = std::process::ExitCode::FAILURE
 /// A run completed, but its outcome was not a pass. Distinct from a Forge
 /// error so a script can tell "the tool broke" from "the change did not work".
 const EXIT_RUN_NOT_PASSED: u8 = 2;
+const EXIT_ROUTING_STOPPED: u8 = 3;
 
 async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
     match cli.command {
@@ -257,6 +258,9 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 commands::run::RunExit::Passed => std::process::ExitCode::SUCCESS,
                 commands::run::RunExit::NotPassed => {
                     std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                }
+                commands::run::RunExit::RoutingStopped => {
+                    std::process::ExitCode::from(EXIT_ROUTING_STOPPED)
                 }
             })
         }

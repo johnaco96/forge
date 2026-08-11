@@ -16,6 +16,7 @@ use forge_core::patch::PatchWarning;
 use forge_core::result::{Evaluation, EvaluatorExecutionStatus, EvaluatorKind, Verdict};
 use forge_core::run::{
     AgentExecutionStatus, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
+    SelectionSource,
 };
 use forge_core::task::{EngineeringTask, TaskClassification, TaskRevisionId};
 use serde::{Deserialize, Serialize};
@@ -203,6 +204,8 @@ pub struct ExportRecord {
     pub agent: AgentConfig,
     /// Additive Phase 4A field; schema version 1 readers may ignore it.
     pub execution_provenance: ExecutionProvenance,
+    /// Additive Phase 4B field; older rows deserialize as manual selection.
+    pub selection_source: SelectionSource,
     pub status: RunStatus,
     pub agent_status: Option<AgentExecutionStatus>,
     pub outcome: Option<RunOutcome>,
@@ -650,6 +653,7 @@ impl Store {
                 base_commit: run.base_commit.clone(),
                 agent: run.agent.clone(),
                 execution_provenance: run.execution_provenance,
+                selection_source: run.selection_source.clone(),
                 status: run.status,
                 agent_status: run.execution.as_ref().map(|execution| execution.status),
                 outcome: run.outcome,
@@ -1959,7 +1963,8 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        // Opening with current Forge applies 0007 to the Phase 3 file; no
+        // Opening with current Forge applies the Phase 4 migrations to the
+        // Phase 3 file; no
         // rebuild or data rewrite is required.
         let migrated = Store::open(&database).await.unwrap();
         let history = migrated
@@ -1976,14 +1981,19 @@ mod tests {
         assert_eq!(history[0].task_revision_id.as_str(), "legacy:T-2000");
         assert_eq!(history[0].classification.language.as_deref(), Some("rust"));
         assert_eq!(history[0].components, vec!["docs"]);
+        let migrated_run = migrated
+            .load_run(&RunId::sequential(20))
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            migrated
-                .load_run(&RunId::sequential(20))
-                .await
-                .unwrap()
-                .unwrap()
-                .execution_provenance,
+            migrated_run.execution_provenance,
             ExecutionProvenance::Unknown
+        );
+        assert_eq!(migrated_run.selection_source, SelectionSource::Manual);
+        assert_eq!(
+            migrated.export_records().await.unwrap()[0].selection_source,
+            SelectionSource::Manual
         );
     }
 

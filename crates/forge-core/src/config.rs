@@ -83,14 +83,50 @@ pub struct DefaultsConfig {
     pub timeout_secs: u64,
 }
 
-/// Conservative readiness settings for the future automatic router.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Conservative settings for the deterministic historical router.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutingConfig {
     pub minimum_total_evidence: u64,
     pub minimum_agent_evidence: u64,
     #[serde(default)]
     pub exploration_policy: ExplorationPolicy,
+    #[serde(default = "default_minimum_score_margin")]
+    pub minimum_score_margin: f64,
+    #[serde(default)]
+    pub baseline: BaselineRoutingConfig,
+    #[serde(default = "default_periodic_competition_interval")]
+    pub periodic_competition_interval: u64,
+}
+
+fn default_minimum_score_margin() -> f64 {
+    0.05
+}
+
+fn default_periodic_competition_interval() -> u64 {
+    10
+}
+
+fn default_prior() -> f64 {
+    1.0
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BaselineRoutingConfig {
+    #[serde(default = "default_prior")]
+    pub prior_alpha: f64,
+    #[serde(default = "default_prior")]
+    pub prior_beta: f64,
+}
+
+impl Default for BaselineRoutingConfig {
+    fn default() -> Self {
+        Self {
+            prior_alpha: 1.0,
+            prior_beta: 1.0,
+        }
+    }
 }
 
 impl Default for RoutingConfig {
@@ -100,6 +136,9 @@ impl Default for RoutingConfig {
             minimum_total_evidence: minimum.total,
             minimum_agent_evidence: minimum.per_agent,
             exploration_policy: ExplorationPolicy::default(),
+            minimum_score_margin: default_minimum_score_margin(),
+            baseline: BaselineRoutingConfig::default(),
+            periodic_competition_interval: default_periodic_competition_interval(),
         }
     }
 }
@@ -143,7 +182,7 @@ pub struct AgentSettings {
     pub settings: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForgeConfig {
     pub version: u32,
@@ -278,6 +317,27 @@ impl ForgeConfig {
                 "routing.minimum_agent_evidence must be greater than zero".into(),
             ));
         }
+        if !self.routing.minimum_score_margin.is_finite()
+            || !(0.0..=1.0).contains(&self.routing.minimum_score_margin)
+        {
+            return Err(ConfigError::Invalid(
+                "routing.minimum_score_margin must be between zero and one".into(),
+            ));
+        }
+        if !self.routing.baseline.prior_alpha.is_finite()
+            || self.routing.baseline.prior_alpha <= 0.0
+            || !self.routing.baseline.prior_beta.is_finite()
+            || self.routing.baseline.prior_beta <= 0.0
+        {
+            return Err(ConfigError::Invalid(
+                "routing baseline priors must be finite and greater than zero".into(),
+            ));
+        }
+        if self.routing.periodic_competition_interval == 0 {
+            return Err(ConfigError::Invalid(
+                "routing.periodic_competition_interval must be greater than zero".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -313,10 +373,16 @@ impl ForgeConfig {
              timeout_secs = {timeout}\n\
              \n\
              [routing]\n\
-             # Readiness thresholds for future automatic routing. Phase 4A does not select.\n\
+             # Deterministic historical-baseline routing policy.\n\
              minimum_total_evidence = {minimum_total}\n\
              minimum_agent_evidence = {minimum_agent}\n\
+             minimum_score_margin = {minimum_margin}\n\
              exploration_policy = \"{exploration}\"\n\
+             periodic_competition_interval = {periodic_interval}\n\
+             \n\
+             [routing.baseline]\n\
+             prior_alpha = {prior_alpha}\n\
+             prior_beta = {prior_beta}\n\
              \n\
              # Per-agent overrides. Unrecognized keys are passed to the adapter.\n\
              # [agents.claude]\n\
@@ -334,6 +400,10 @@ impl ForgeConfig {
             timeout = default.defaults.timeout_secs,
             minimum_total = default.routing.minimum_total_evidence,
             minimum_agent = default.routing.minimum_agent_evidence,
+            minimum_margin = default.routing.minimum_score_margin,
+            periodic_interval = default.routing.periodic_competition_interval,
+            prior_alpha = default.routing.baseline.prior_alpha,
+            prior_beta = default.routing.baseline.prior_beta,
             exploration = match default.routing.exploration_policy {
                 ExplorationPolicy::None => "none",
                 ExplorationPolicy::CompeteWhenUncertain => "compete_when_uncertain",

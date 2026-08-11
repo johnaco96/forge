@@ -1,174 +1,137 @@
-# Routing contract and evidence policy
+# Historical baseline routing
 
-Phase 4A defines the trusted, provider-agnostic boundary that a future router
-will consume. It does not select or execute an agent.
+Forge can select one currently available agent configuration with:
 
-> Forge does not yet automatically select an agent in Phase 4A.
+```bash
+forge run task.yaml --agent auto
+```
 
-`forge run task.yaml --agent auto` exits with an explicit not-implemented
-message. There is no partial routing or silent fallback.
+Phase 4B builds directly on the Phase 4A trust boundary. The router receives an
+immutable `TaskRevision`, exact current candidate configuration fingerprints,
+the versioned evidence policy, readiness thresholds, exploration policy, and a
+historical cutoff. A selected adapter then enters the same ordinary Forge run
+pipeline used by explicit agent invocations. Routing never creates a second
+workspace, prompt, patch, evaluation, event, or artifact path.
 
-## Immutable routing input
+## Evidence and identity
 
-A `RoutingRequest` owns the exact `TaskRevision` being routed, a resolved
-`CandidateAgentSet`, the evidence and exploration policies, readiness
-thresholds, and a historical cutoff timestamp. The revision is a complete
-content-addressed task definition; later edits to the same logical `TaskId`
-cannot change the request or the historical observations returned for it.
+`routing-evidence-v1` admits genuine `live` completed runs with an execution
+record, a Forge outcome, acceptable integrity, comparable immutable task
+metadata, and usable evaluator evidence. `synthetic`, `unknown`, and `imported`
+provenance are excluded by default. Imported evidence can be admitted only by
+an explicit programmatic evidence policy. Infrastructure failures are excluded
+rather than mislabeled as engineering failures.
 
-`RoutingFeatures` contains only facts known before execution:
+Evidence is matched to the exact current `AgentConfig` fingerprint—not merely
+the provider name. A historical run from another model, harness, permission
+mode, executable setting, or other stable configuration is reported as a
+configuration-mismatch exclusion. Forge selects only among current registered
+configurations; it does not search arbitrary configurations.
 
-- task and revision identity;
-- repository;
-- declared category, language, domain, and difficulty;
-- declared components and tags;
-- deterministic lowercase objective terms.
+PASS is positive and FAIL is negative. INCONCLUSIVE and NO_CHANGE remain
+separate unresolved records: they appear in counts and explanations but do not
+vote in the success estimate. Experiment membership and manual, automatic, or
+competition selection source are retained for analysis. They receive no
+special weight in this first policy.
 
-Actual patch size, runtime, tokens, cost, evaluator output, and benchmark
-improvement are not request features. Expected patch lines and code complexity
-are explicitly marked unavailable because Forge cannot know them reliably
-before execution. Forge does not invoke an LLM classifier or fabricate an
-estimate.
+## `historical-baseline-v1`
 
-## Execution provenance
+For each candidate, every resolved historical observation has weight equal to
+its deterministic task-similarity score. Repository, classification, domain,
+components, tags, and objective terms therefore influence routing through the
+accepted similarity model; no embeddings or LLM are used.
 
-Every new run records a typed `ExecutionProvenance`:
+With weighted positive evidence `P`, weighted negative evidence `N`, and
+configured Beta prior `α, β`:
 
-| Value | Meaning | Default production evidence |
-|---|---|---|
-| `live` | Genuine engineering execution | eligible for policy checks |
-| `synthetic` | Deterministic fake/stub infrastructure execution | excluded |
-| `imported` | Evidence supplied from outside this ledger | excluded |
-| `unknown` | Provenance cannot be established | excluded |
+```text
+predicted_success = routing_score = (P + α) / (P + N + α + β)
+evidence_strength = (P + N) / (P + N + α + β)
+```
 
-Forge never infers provenance from an agent name, harness, model, or executable
-path. Normal CLI executions assert `live`. Local CLI stub configurations used
-by automated tests explicitly set `execution_provenance = "synthetic"`.
-Programmatic runner requests default to `unknown` until their caller makes an
-explicit assertion.
-
-Migration 0007 assigns `unknown` to every older row. Some older runs may have
-been genuine, but relabeling them `live` would be an unsupported trust claim.
-Phase 0 through Phase 3 databases migrate in place; task-revision bindings and
-ordinary ledger queries are unchanged.
-
-## Default evidence policy
-
-The versioned `routing-evidence-v1` policy considers runs for the requested
-candidate identities up to the request cutoff. A run is eligible only when:
-
-- its provenance is `live`;
-- the Forge pipeline reached `Completed` rather than failing or being
-  cancelled;
-- an agent execution record exists and did not fail to start or get cancelled;
-- Forge recorded a non-`ERROR` outcome;
-- integrity is present and clean;
-- comparable immutable task metadata reaches the configured similarity floor;
-- changed-work outcomes have evaluation evidence;
-- evaluators had no infrastructure execution errors.
-
-Agent nonzero exits and timeouts are not automatically infrastructure failures.
-If Forge still captured and evaluated a patch, the trusted Forge outcome remains
-the target. By contrast, `RunStatus::Failed`, a start failure, or `ERROR` means
-Forge could not establish an engineering result and is excluded.
-
-Every in-scope row appears either as an eligible record or as one typed
-exclusion. The summary reports totals and counts such as synthetic, unknown,
-integrity violation, incomplete/infrastructure failure, missing evaluation,
-and evaluator infrastructure failure. Nothing is silently discarded.
-
-Synthetic rows remain visible in `forge history`, agent statistics, failures,
-experiments, similarity, and JSONL export. Only production routing evidence
-excludes them by default.
-
-## Outcome targets
-
-The first router's target contract is derived only from Forge's trusted
-`RunOutcome`:
-
-| Forge outcome | Routing target |
-|---|---|
-| `PASS` | positive |
-| `FAIL` | negative |
-| `INCONCLUSIVE` | unresolved/inconclusive |
-| `NO_CHANGE` | unresolved/no-change |
-| `ERROR` | infrastructure exclusion |
-
-`FAIL` is a normal negative engineering observation. `INCONCLUSIVE` and
-`NO_CHANGE` remain distinct and visible; neither is coerced to success or
-failure. Integrity violations are excluded by the default policy, and a
-malformed positive row with unacceptable integrity can never be admitted as
-positive evidence even under a relaxed integrity filter. No weighted quality
-score is introduced.
-
-## Evidence record and readiness
-
-`RoutingEvidenceRecord` is compact and provider-agnostic. It contains the run
-and task-revision IDs, exact historical pre-run features, agent configuration
-and fingerprint, similarity evidence, lifecycle/process/outcome facts,
-integrity, evaluator summary, agent runtime, provider-reported usage, known
-cost, provenance, experiment membership, and creation time. It never embeds
-logs, prompts, diffs, patch content, or raw SQLite rows.
-
-Readiness thresholds are intentionally small and configurable:
+The defaults `α = 1` and `β = 1` prevent a single PASS from becoming a 100%
+prediction. Candidates are sorted by score, then agent ID for deterministic
+ties. The five highest-similarity historical runs per candidate are persisted
+as influential evidence. This is a transparent historical decision policy,
+not a statistical-significance claim or universal agent ranking.
 
 ```toml
 [routing]
 minimum_total_evidence = 10
 minimum_agent_evidence = 3
+minimum_score_margin = 0.05
 exploration_policy = "compete_when_uncertain"
+periodic_competition_interval = 10
+
+[routing.baseline]
+prior_alpha = 1.0
+prior_beta = 1.0
 ```
 
-Only resolved positive/negative observations satisfy the minima. Trustworthy
-unresolved records remain eligible and explainable but cannot manufacture a
-predictive sample size. `RoutingReadiness::InsufficientEvidence` returns typed
-reasons, including no eligible live history, no comparable revisions, only one
-candidate with resolved evidence, insufficient total evidence, and a candidate
-below its per-agent minimum. Forge does not invent probabilities or force a
-recommendation.
+Only resolved observations satisfy readiness. Every candidate must meet the
+per-agent minimum and the cohort must meet the total minimum. A winner is
+selected only when the leading score exceeds the runner-up by at least the
+configured margin.
 
-Candidate resolution is provider-agnostic. A candidate must be registered,
-implemented, explicitly available/configured, and satisfy required
-capabilities. The contract stores exact configuration fingerprints and does
-not hard-code Claude or Codex, allowing future local and specialized agents.
+Exactly one available candidate returns `InsufficientEvidence` with an
+only-available-candidate reason and asks for explicit selection. Forge does not
+describe availability as a learned preference. No available candidates is a
+clear configuration error.
 
-## Exploration and decision contracts
+## Exploration outcomes
 
-The exploration policy supports `none`, `compete_when_uncertain`, and
-`periodic_competition`. These are contracts only; Phase 4A does not launch a
-competition. A future insufficient-evidence decision can suggest gathering
-live evidence, manual selection, or a comparative run without pretending an
-agent is already known to be best.
+- `none`: ready, separated scores select; insufficient or close evidence stops
+  with `InsufficientEvidence`. It never launches competition.
+- `compete_when_uncertain`: insufficient or close evidence returns
+  `CompeteRecommended`. The CLI stops and prints an explicit `forge compete`
+  command; it does not launch hidden work.
+- `periodic_competition`: uncertainty also recommends competition. Even with a
+  clear leader, competition is recommended when the eligible resolved count is
+  a nonzero multiple of `periodic_competition_interval`. A subsequent real
+  competition normally advances the count, giving a small deterministic
+  cadence without a bandit or scheduler.
 
-`RoutingDecision` has typed `Selected`, `InsufficientEvidence`, and
-`CompeteRecommended` forms. Explanations contain structured evidence counts,
-similar-task counts, per-agent observations, exclusion counts, readiness
-reasons, a decision source, and a policy version. Phase 4A does not construct a
-`Selected` decision and contains no heuristic or learned selection algorithm.
+Routing stops use process exit code 3. This is distinct from exit code 1
+(Forge/configuration failure) and exit code 2 (an executed run did not pass).
 
-## Reproducibility
+## Persistence, explanation, and reproduction
 
-Every query returns a `RoutingEvidenceSnapshot` containing:
+Migration 0008 adds durable routing decision and routing-event records. Each
+decision stores its ID, optional resulting run, task and revision, timestamp,
+candidates and exact configurations, selected configuration, decision kind,
+router/evidence-policy versions, policy parameters, cutoff, evidence
+fingerprint, counts, typed exclusions, candidate scores, margin, influential
+runs, readiness, and structured explanation. Lifecycle events are
+`RoutingStarted`, `RoutingEvidenceResolved`, and one typed terminal event.
 
-- routing-contract and evidence-policy versions;
-- an explicit absent routing-policy version in Phase 4A;
-- exact target task revision;
-- sorted candidate configuration fingerprints;
-- historical cutoff timestamp;
-- minimum-evidence configuration;
-- deterministically ordered eligible run IDs;
-- a SHA-256 fingerprint over the complete request, eligible records, and
-  typed exclusions.
+An auto-selected run separately records `SelectionSource::Automatic` with the
+decision ID, router version, and evidence fingerprint. Manual and competition
+runs retain their typed sources. This never changes `ExecutionProvenance`: a
+manual and an automatic run can both be genuine `live` evidence.
 
-The fingerprint changes if the evidence or policy input changes and is stable
-for repeated queries over identical state. It prevents a later query against a
-changed ledger from being represented as the evidence behind an earlier
-decision. This is not a model registry.
+The snapshot SHA-256 covers the complete request, eligible ordered evidence,
+and typed exclusions. Together, task revision, exact candidates, router
+version, policy configuration, cutoff, and fingerprint reproduce the same
+decision. Runs added after the cutoff cannot rewrite a persisted decision.
+Phase 0–4A databases migrate in place; older runs become manual selection and
+keep their existing immutable task revisions and provenance.
 
-## Phase boundary
+## CLI behavior
 
-Phase 4A does not implement logistic regression, boosted trees, LLM routing,
-configuration optimization, automatic competition, multi-agent execution,
-task decomposition, scheduling, repository world models, or automatic agent
-execution. The real routing algorithm and activation of `--agent auto` require
-a separate architectural review.
+A selected route prints candidate scores, counts, selected configuration,
+margin, router version, decision ID, and fingerprint before the ordinary run
+report, whose selection line reads `AUTO → <agent>`.
+
+If history is below readiness, `none` prints `INSUFFICIENT EVIDENCE`; the
+default uncertainty policy prints `COMPETITION RECOMMENDED`. Close scores do
+the same under the configured margin. Neither case runs an agent.
+
+## Limitations and feedback loops
+
+Automatic genuine runs may become future eligible evidence. Their typed source
+is retained so later policies can study selection bias, but v1 does not
+reweight or exclude them. Competition evidence is identifiable but not
+privileged. The policy has no confidence intervals, embeddings, configuration
+optimization, bandit exploration, LLM routing, task decomposition, teamwork,
+or self-modification. Changing decision-affecting behavior requires a new
+router version.
