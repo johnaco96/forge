@@ -19,7 +19,9 @@ use forge_core::events::EventPayload;
 use forge_core::ids::{AgentId, TaskId};
 use forge_core::integrity::ProtectionPolicy;
 use forge_core::result::{EvaluatorKind, Verdict};
-use forge_core::run::{AgentExecution, AgentExecutionStatus, RunOutcome, RunStatus, Usage};
+use forge_core::run::{
+    AgentExecution, AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus, Usage,
+};
 use forge_core::task::{
     BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskMetadata,
 };
@@ -316,13 +318,9 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     let runner = fixture.runner().await;
     let agent = edits("value.txt", "2\n");
 
-    let report = runner
-        .execute(
-            RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude"),
-            &agent,
-        )
-        .await
-        .unwrap();
+    let mut request = RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude");
+    request.execution_provenance = ExecutionProvenance::Synthetic;
+    let report = runner.execute(request, &agent).await.unwrap();
 
     // The three statuses, each saying its own thing.
     assert_eq!(report.run.status, RunStatus::Completed);
@@ -344,6 +342,7 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     let store = runner.store();
     let stored = store.load_run(&report.run.run_id).await.unwrap().unwrap();
     assert_eq!(stored.outcome, Some(RunOutcome::Passed));
+    assert_eq!(stored.execution_provenance, ExecutionProvenance::Synthetic);
     let evaluation = store
         .load_evaluation(&report.run.run_id)
         .await

@@ -14,12 +14,13 @@ use forge_core::ids::{ExperimentId, RunId, TaskId};
 use forge_core::integrity::{EvaluationIntegrity, IntegrityStatus};
 use forge_core::patch::PatchWarning;
 use forge_core::result::{Evaluation, EvaluatorExecutionStatus, EvaluatorKind, Verdict};
-use forge_core::run::{AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus};
-use forge_core::task::{EngineeringTask, TaskClassification};
+use forge_core::run::{
+    AgentExecutionStatus, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
+};
+use forge_core::task::{EngineeringTask, TaskClassification, TaskRevisionId};
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
 
-use crate::sqlite::TaskRevisionId;
 use crate::{Store, StoreError, StoreResult};
 
 pub const EXPORT_SCHEMA_VERSION: u32 = 1;
@@ -200,6 +201,8 @@ pub struct ExportRecord {
     pub task: TaskExperience,
     pub base_commit: String,
     pub agent: AgentConfig,
+    /// Additive Phase 4A field; schema version 1 readers may ignore it.
+    pub execution_provenance: ExecutionProvenance,
     pub status: RunStatus,
     pub agent_status: Option<AgentExecutionStatus>,
     pub outcome: Option<RunOutcome>,
@@ -521,7 +524,7 @@ impl Store {
         .fetch_one(self.pool())
         .await?;
         let target_revision = target_revision
-            .map(TaskRevisionId::from_stored)
+            .map(parse_task_revision_id)
             .transpose()?
             .ok_or_else(|| StoreError::NotFound(format!("task `{task_id}`")))?;
         let target = profiles.get(&target_revision).ok_or_else(|| {
@@ -534,7 +537,7 @@ impl Store {
         .await?;
         let historical_revisions = historical_revision_rows
             .into_iter()
-            .map(TaskRevisionId::from_stored)
+            .map(parse_task_revision_id)
             .collect::<StoreResult<BTreeSet<_>>>()?;
         let outcomes = self.task_revision_agent_outcomes().await?;
         let mut matches = profiles
@@ -646,6 +649,7 @@ impl Store {
                 task,
                 base_commit: run.base_commit.clone(),
                 agent: run.agent.clone(),
+                execution_provenance: run.execution_provenance,
                 status: run.status,
                 agent_status: run.execution.as_ref().map(|execution| execution.status),
                 outcome: run.outcome,
@@ -671,7 +675,7 @@ impl Store {
         Ok(records)
     }
 
-    async fn task_revision_profiles(
+    pub(crate) async fn task_revision_profiles(
         &self,
     ) -> StoreResult<BTreeMap<TaskRevisionId, TaskExperience>> {
         let rows = sqlx::query(
@@ -708,7 +712,7 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 let raw_revision_id: String = row.try_get("revision_id")?;
-                let revision_id = TaskRevisionId::from_stored(raw_revision_id.clone())?;
+                let revision_id = parse_task_revision_id(raw_revision_id.clone())?;
                 Ok((
                     revision_id.clone(),
                     TaskExperience {
@@ -843,7 +847,7 @@ fn median_f64(values: &mut [f64]) -> Option<f64> {
 }
 
 /// Transparent fixed-weight similarity. Missing fields contribute nothing.
-fn similarity(left: &TaskExperience, right: &TaskExperience) -> (f64, Vec<String>) {
+pub(crate) fn similarity(left: &TaskExperience, right: &TaskExperience) -> (f64, Vec<String>) {
     let mut score = 0.0;
     let mut matched = Vec::new();
     if left.repository == right.repository {
@@ -1015,7 +1019,7 @@ fn parse_task_id(raw: String) -> StoreResult<TaskId> {
 }
 
 fn parse_task_revision_id(raw: String) -> StoreResult<TaskRevisionId> {
-    TaskRevisionId::from_stored(raw)
+    TaskRevisionId::from_stored(raw).map_err(|error| StoreError::Corrupt(error.to_string()))
 }
 
 fn parse_experiment_id(raw: String) -> StoreResult<ExperimentId> {
@@ -1827,6 +1831,7 @@ mod tests {
             "0003_experiments.sql",
             "0004_evaluator_results.sql",
             "0005_experience_queries.sql",
+            "0006_immutable_task_revisions.sql",
         ] {
             std::fs::copy(
                 manifest.join("migrations").join(name),
@@ -1874,12 +1879,45 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO task_revisions (
+                revision_id, task_id, repository, objective, category, language, domain,
+                difficulty, definition_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .bind("legacy:T-2000")
+        .bind(old_task.task_id.as_str())
+        .bind(&old_task.repository)
+        .bind(&old_task.objective)
+        .bind("documentation")
+        .bind("rust")
+        .bind("executor")
+        .bind(Option::<String>::None)
+        .bind(serde_json::to_string(&old_task).unwrap())
+        .bind("2026-01-01T00:00:00+00:00")
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE tasks SET current_revision_id = ?2 WHERE task_id = ?1")
+            .bind(old_task.task_id.as_str())
+            .bind("legacy:T-2000")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO task_components (task_id, component) VALUES (?1, ?2)")
             .bind(old_task.task_id.as_str())
             .bind("docs")
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(
+            "INSERT INTO task_revision_components (revision_id, component) VALUES (?1, ?2)",
+        )
+        .bind("legacy:T-2000")
+        .bind("docs")
+        .execute(&pool)
+        .await
+        .unwrap();
         let old_run = completed_run(
             20,
             2000,
@@ -1894,11 +1932,16 @@ mod tests {
             Some((1, 1, 0)),
             IntegrityStatus::Clean,
         );
+        let mut old_record = serde_json::to_value(&old_run).unwrap();
+        old_record
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_provenance");
         sqlx::query(
             "INSERT INTO runs (
                 run_id, task_id, agent_id, config_fingerprint, base_commit, status,
-                created_at, record_json, agent_status, outcome
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                created_at, record_json, agent_status, outcome, task_revision_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         )
         .bind(old_run.run_id.as_str())
         .bind(old_run.task_id.as_str())
@@ -1907,15 +1950,16 @@ mod tests {
         .bind(&old_run.base_commit)
         .bind(old_run.status.as_str())
         .bind(old_run.created_at.to_rfc3339())
-        .bind(serde_json::to_string(&old_run).unwrap())
+        .bind(serde_json::to_string(&old_record).unwrap())
         .bind(AgentExecutionStatus::Completed.as_str())
         .bind(RunOutcome::Passed.as_str())
+        .bind("legacy:T-2000")
         .execute(&pool)
         .await
         .unwrap();
         pool.close().await;
 
-        // Opening with current Forge applies 0006 to the existing file; no
+        // Opening with current Forge applies 0007 to the Phase 3 file; no
         // rebuild or data rewrite is required.
         let migrated = Store::open(&database).await.unwrap();
         let history = migrated
@@ -1932,6 +1976,122 @@ mod tests {
         assert_eq!(history[0].task_revision_id.as_str(), "legacy:T-2000");
         assert_eq!(history[0].classification.language.as_deref(), Some("rust"));
         assert_eq!(history[0].components, vec!["docs"]);
+        assert_eq!(
+            migrated
+                .load_run(&RunId::sequential(20))
+                .await
+                .unwrap()
+                .unwrap()
+                .execution_provenance,
+            ExecutionProvenance::Unknown
+        );
+    }
+
+    #[tokio::test]
+    async fn phase_zero_database_migrates_through_revisions_and_unknown_provenance() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_migrations = temp.path().join("old-migrations");
+        std::fs::create_dir(&old_migrations).unwrap();
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        std::fs::copy(
+            manifest.join("migrations/0001_init.sql"),
+            old_migrations.join("0001_init.sql"),
+        )
+        .unwrap();
+        let database = temp.path().join("phase-zero.db");
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(&database)
+                    .create_if_missing(true)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+        sqlx::migrate::Migrator::new(old_migrations)
+            .await
+            .unwrap()
+            .run(&pool)
+            .await
+            .unwrap();
+
+        let old_task = legacy_task(3000);
+        sqlx::query(
+            "INSERT INTO tasks (
+                task_id, repository, objective, task_type, language, subsystem,
+                definition_json, created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(old_task.task_id.as_str())
+        .bind(&old_task.repository)
+        .bind(&old_task.objective)
+        .bind(old_task.metadata.task_type.as_deref())
+        .bind(old_task.metadata.language.as_deref())
+        .bind(old_task.metadata.subsystem.as_deref())
+        .bind(serde_json::to_string(&old_task).unwrap())
+        .bind("2025-01-01T00:00:00+00:00")
+        .execute(&pool)
+        .await
+        .unwrap();
+        let old_run = completed_run(
+            30,
+            3000,
+            "claude",
+            RunOutcome::Passed,
+            DateTime::parse_from_rfc3339("2025-01-01T00:00:01Z")
+                .unwrap()
+                .with_timezone(&Utc),
+            50,
+            None,
+            None,
+            Some((1, 1, 0)),
+            IntegrityStatus::Clean,
+        );
+        let mut old_record = serde_json::to_value(&old_run).unwrap();
+        old_record
+            .as_object_mut()
+            .unwrap()
+            .remove("execution_provenance");
+        sqlx::query(
+            "INSERT INTO runs (
+                run_id, task_id, agent_id, config_fingerprint, base_commit, status,
+                created_at, record_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(old_run.run_id.as_str())
+        .bind(old_run.task_id.as_str())
+        .bind(old_run.agent.agent_id.as_str())
+        .bind(old_run.agent.fingerprint())
+        .bind(&old_run.base_commit)
+        .bind(old_run.status.as_str())
+        .bind(old_run.created_at.to_rfc3339())
+        .bind(serde_json::to_string(&old_record).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool.close().await;
+
+        let migrated = Store::open(&database).await.unwrap();
+        let run = migrated
+            .load_run(&RunId::sequential(30))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.execution_provenance, ExecutionProvenance::Unknown);
+        let history = migrated
+            .history(&HistoryFilter {
+                task_id: Some(TaskId::sequential(3000)),
+                limit: 1,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(history[0].task_revision_id.as_str(), "legacy:T-3000");
+        assert_eq!(
+            history[0].classification.category.as_deref(),
+            Some("documentation")
+        );
     }
 
     #[tokio::test]

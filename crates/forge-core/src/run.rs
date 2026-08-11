@@ -30,6 +30,44 @@ use crate::patch::{ExcludedEntry, PatchWarning};
 use crate::result::Verdict;
 use crate::security::SecurityPosture;
 
+/// How a run's agent execution was produced.
+///
+/// This is explicit trust provenance, not something Forge infers from an
+/// agent name, executable path, or harness metadata. Historical rows that
+/// predate this field deserialize as [`Unknown`](Self::Unknown).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionProvenance {
+    /// A genuine agent execution intended to solve an engineering task.
+    Live,
+    /// A deterministic fake/stub execution used to validate Forge itself.
+    Synthetic,
+    /// Evidence imported from outside this Forge ledger.
+    Imported,
+    /// Provenance could not be established without guessing.
+    #[default]
+    Unknown,
+}
+
+impl ExecutionProvenance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Synthetic => "synthetic",
+            Self::Imported => "imported",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+impl std::fmt::Display for ExecutionProvenance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RunError {
     #[error("invalid run transition: {from} -> {to}")]
@@ -39,7 +77,7 @@ pub enum RunError {
 /// Where a run reached in Forge's pipeline.
 ///
 /// Says nothing about quality: a `Completed` run may have failed every check.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RunStatus {
     /// Recorded, not yet started.
@@ -396,6 +434,9 @@ pub struct AgentRun {
     pub run_id: RunId,
     pub task_id: TaskId,
     pub agent: AgentConfig,
+    /// Explicit trust provenance for routing and analytical policy.
+    #[serde(default)]
+    pub execution_provenance: ExecutionProvenance,
     /// The commit every competing run for this task starts from.
     pub base_commit: String,
     pub status: RunStatus,
@@ -459,6 +500,7 @@ impl AgentRun {
             run_id,
             task_id,
             agent,
+            execution_provenance: ExecutionProvenance::Unknown,
             base_commit: base_commit.into(),
             status: RunStatus::Pending,
             created_at: Utc::now(),

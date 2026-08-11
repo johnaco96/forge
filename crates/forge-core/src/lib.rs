@@ -25,13 +25,16 @@ pub mod ids;
 pub mod integrity;
 pub mod patch;
 pub mod result;
+pub mod routing;
 pub mod run;
 pub mod security;
 pub mod task;
 pub mod workspace;
 
 pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
-pub use config::{AgentSettings, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout};
+pub use config::{
+    AgentSettings, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout, RoutingConfig,
+};
 pub use events::{Event, EventPayload, EventSink, NullSink, RecordingSink};
 pub use experiment::{
     Comparison, ComparisonInput, ComparisonKey, ComparisonRelation, DimensionComparison,
@@ -51,13 +54,22 @@ pub use result::{
     EvaluatorExecutionStatus, EvaluatorKind, EvaluatorSummary, Metric, MetricName, MetricNameError,
     MetricValue, Score, ScoreError, Verdict,
 };
+pub use routing::{
+    AgentEvidenceCount, CandidateAgent, CandidateAgentSet, DecisionSource, EvidenceExclusionCount,
+    EvidenceExclusionReason, EvidencePolicyVersion, ExcludedRoutingEvidence, ExplorationPolicy,
+    MinimumRoutingEvidence, RoutingContractError, RoutingDecision, RoutingEvidence,
+    RoutingEvidencePolicy, RoutingEvidenceRecord, RoutingEvidenceSnapshot, RoutingEvidenceSummary,
+    RoutingExplanation, RoutingExplanationReason, RoutingFeatures, RoutingReadiness,
+    RoutingReadinessReason, RoutingRequest, RoutingSuggestedAction, RoutingTarget,
+    UnavailableRoutingFeature, UnavailableRoutingFeatureKind, UnresolvedRoutingTarget,
+};
 pub use run::{
-    AgentExecution, AgentExecutionStatus, AgentRun, PatchSummary, RunArtifacts, RunError,
-    RunOutcome, RunStatus, Usage,
+    AgentExecution, AgentExecutionStatus, AgentRun, ExecutionProvenance, PatchSummary,
+    RunArtifacts, RunError, RunOutcome, RunStatus, Usage,
 };
 pub use security::{AgentSecurity, HostContainment, SecurityPosture, WorkspaceIsolation};
 pub use task::{
     BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskClassification,
-    TaskError, TaskMetadata,
+    TaskError, TaskMetadata, TaskRevision, TaskRevisionError, TaskRevisionId,
 };
 pub use workspace::{Workspace, WorkspaceKind};

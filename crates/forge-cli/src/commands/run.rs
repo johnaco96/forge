@@ -49,6 +49,12 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
             anyhow!("no agent specified and no `defaults.agent` configured; pass --agent <name>")
         })?;
 
+    if agent_id == "auto" {
+        bail!(
+            "automatic agent routing is not implemented in Phase 4A; choose a registered agent explicitly"
+        );
+    }
+
     let registry = AgentRegistry::builtin();
     if registry.get(&agent_id).is_none() {
         bail!("unknown agent `{agent_id}`; run `forge agent list` to see the available agents");
@@ -60,6 +66,7 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     let runner = Runner::new(repository, config.clone(), store);
 
     let mut request = RunRequest::new(task.clone(), &agent_id);
+    request.execution_provenance = config.execution_provenance_for(&agent_id);
     request.base_rev = args.base.clone();
     request.timeout = args.timeout_secs.map(Duration::from_secs);
     if args.keep_workspace {

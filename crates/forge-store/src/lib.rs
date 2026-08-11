@@ -10,6 +10,7 @@
 
 pub mod error;
 pub mod experience;
+pub mod routing;
 pub mod sqlite;
 
 pub use error::{StoreError, StoreResult};
@@ -18,4 +19,5 @@ pub use experience::{
     ExperimentHistoryEntry, ExperimentRunHistory, ExportRecord, FailedEvaluatorSummary,
     FailureFilter, FailureSummary, HistoryFilter, RunHistoryEntry, TaskExperience, TaskSimilarity,
 };
-pub use sqlite::{RunSummary, Store, TaskRevisionId};
+pub use forge_core::task::TaskRevisionId;
+pub use sqlite::{RunSummary, Store};

@@ -14,8 +14,7 @@ use forge_core::experiment::{Experiment, ExperimentEvent};
 use forge_core::ids::{ExperimentId, RunId, TaskId};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus};
-use forge_core::task::EngineeringTask;
-use sha2::{Digest, Sha256};
+use forge_core::task::{EngineeringTask, TaskRevisionId};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
@@ -45,46 +44,6 @@ pub struct RunSummary {
     pub files_changed: Option<u64>,
     pub lines_changed: Option<u64>,
     pub cost_usd: Option<f64>,
-}
-
-/// Immutable identity of the exact task definition bound to a run.
-///
-/// New revisions are content-addressed. Migrated databases may contain the
-/// reserved `legacy:<task-id>` form for the one snapshot recoverable from the
-/// pre-revision schema.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-#[serde(transparent)]
-pub struct TaskRevisionId(String);
-
-impl TaskRevisionId {
-    fn for_definition(definition_json: &str) -> Self {
-        let digest = Sha256::digest(definition_json.as_bytes());
-        let hash = digest
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>();
-        Self(format!("TR-{hash}"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub(crate) fn from_stored(raw: String) -> StoreResult<Self> {
-        if raw.is_empty() {
-            Err(StoreError::Corrupt("empty task revision ID".into()))
-        } else {
-            Ok(Self(raw))
-        }
-    }
-}
-
-impl std::fmt::Display for TaskRevisionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
 }
 
 /// The experience ledger.
@@ -252,7 +211,7 @@ impl Store {
         .fetch_optional(&mut *tx)
         .await?;
         let revision_id = match existing_revision {
-            Some(raw) => TaskRevisionId::from_stored(raw)?,
+            Some(raw) => parse_task_revision_id(raw)?,
             None => {
                 let revision_id = TaskRevisionId::for_definition(&definition_json);
                 sqlx::query(
@@ -391,7 +350,7 @@ impl Store {
                 .bind(run.task_id.as_str())
                 .fetch_one(&self.pool)
                 .await?;
-                TaskRevisionId::from_stored(raw.ok_or_else(|| {
+                parse_task_revision_id(raw.ok_or_else(|| {
                     StoreError::NotFound(format!(
                         "task revision for run `{}` and task `{}`",
                         run.run_id, run.task_id
@@ -426,16 +385,31 @@ impl Store {
                 run.task_id
             )));
         }
+        let existing_provenance: Option<String> =
+            sqlx::query_scalar("SELECT execution_provenance FROM runs WHERE run_id = ?1")
+                .bind(run.run_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        if existing_provenance
+            .as_deref()
+            .is_some_and(|existing| existing != run.execution_provenance.as_str())
+        {
+            return Err(StoreError::ProvenanceConflict {
+                run_id: run.run_id.to_string(),
+                existing: existing_provenance.unwrap_or_default(),
+                attempted: run.execution_provenance.to_string(),
+            });
+        }
         let fingerprint = self.upsert_agent_config(&run.agent).await?;
         sqlx::query(
             "INSERT INTO runs (
                  run_id, task_id, agent_id, config_fingerprint, experiment_id, base_commit, status,
                  created_at, started_at, finished_at, exit_code, failure_reason, workspace_path,
                  input_tokens, output_tokens, cost_usd, record_json, agent_status, outcome, branch,
-                 task_revision_id
+                 task_revision_id, execution_provenance
              ) VALUES (
                  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21
+                 ?17, ?18, ?19, ?20, ?21, ?22
              )
              ON CONFLICT (run_id) DO UPDATE SET
                  status = excluded.status,
@@ -478,6 +452,7 @@ impl Store {
         .bind(run.outcome.map(|o| o.as_str()))
         .bind(run.branch.as_deref())
         .bind(resolved_revision.as_str())
+        .bind(run.execution_provenance.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -589,14 +564,19 @@ impl Store {
     }
 
     pub async fn load_run(&self, run_id: &RunId) -> StoreResult<Option<AgentRun>> {
-        let record: Option<String> =
-            sqlx::query_scalar("SELECT record_json FROM runs WHERE run_id = ?1")
+        let row =
+            sqlx::query("SELECT record_json, execution_provenance FROM runs WHERE run_id = ?1")
                 .bind(run_id.as_str())
                 .fetch_optional(&self.pool)
                 .await?;
-        record
-            .map(|json| Ok(serde_json::from_str(&json)?))
-            .transpose()
+        row.map(|row| {
+            let mut run: AgentRun =
+                serde_json::from_str(&row.try_get::<String, _>("record_json")?)?;
+            run.execution_provenance =
+                parse_enum(&row.try_get::<String, _>("execution_provenance")?)?;
+            Ok(run)
+        })
+        .transpose()
     }
 
     /// Appends a run's events in one transaction.
@@ -920,6 +900,10 @@ fn parse_time(raw: &str) -> StoreResult<DateTime<Utc>> {
         .map_err(|err| StoreError::Corrupt(format!("invalid timestamp `{raw}`: {err}")))
 }
 
+fn parse_task_revision_id(raw: String) -> StoreResult<TaskRevisionId> {
+    TaskRevisionId::from_stored(raw).map_err(|error| StoreError::Corrupt(error.to_string()))
+}
+
 fn now() -> String {
     Utc::now().to_rfc3339()
 }
@@ -937,6 +921,7 @@ mod tests {
     use forge_core::result::{
         CheckResult, Direction, EvaluatorExecutionStatus, EvaluatorKind, Metric, Verdict,
     };
+    use forge_core::run::ExecutionProvenance;
     use forge_core::task::{CommandSpec, EvaluationSpec, TaskMetadata};
 
     async fn store() -> Store {
@@ -1421,6 +1406,30 @@ mod tests {
         assert_eq!(summaries[0].status, RunStatus::Failed);
         assert_eq!(summaries[0].verdict, None);
         assert_eq!(summaries[0].files_changed, None);
+    }
+
+    #[tokio::test]
+    async fn persisted_execution_provenance_cannot_be_rewritten() {
+        let store = store().await;
+        store.upsert_task(&task()).await.unwrap();
+        let mut recorded = run(RunId::sequential(1));
+        recorded.execution_provenance = ExecutionProvenance::Synthetic;
+        store.save_run(&recorded, None).await.unwrap();
+
+        recorded.execution_provenance = ExecutionProvenance::Live;
+        assert!(matches!(
+            store.save_run(&recorded, None).await.unwrap_err(),
+            StoreError::ProvenanceConflict { .. }
+        ));
+        assert_eq!(
+            store
+                .load_run(&recorded.run_id)
+                .await
+                .unwrap()
+                .unwrap()
+                .execution_provenance,
+            ExecutionProvenance::Synthetic
+        );
     }
 
     #[tokio::test]

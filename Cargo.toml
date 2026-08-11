@@ -18,6 +18,7 @@ forge-git = { path = "crates/forge-git" }
 forge-executor = { path = "crates/forge-executor" }
 forge-eval = { path = "crates/forge-eval" }
 forge-runner = { path = "crates/forge-runner" }
+forge-router = { path = "crates/forge-router" }
 forge-store = { path = "crates/forge-store" }
 
 anyhow = "1"

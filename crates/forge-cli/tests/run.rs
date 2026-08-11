@@ -165,7 +165,7 @@ impl Fixture {
         let config_path = self.repo.join(".forge/config.toml");
         let mut config = std::fs::read_to_string(&config_path).unwrap();
         config.push_str(&format!(
-            "\n[agents.claude]\nexecutable = \"{}\"\n",
+            "\n[agents.claude]\nexecutable = \"{}\"\nexecution_provenance = \"synthetic\"\n",
             stub.path.display()
         ));
         std::fs::write(&config_path, config).unwrap();
@@ -176,7 +176,7 @@ impl Fixture {
         let config_path = self.repo.join(".forge/config.toml");
         let mut config = std::fs::read_to_string(&config_path).unwrap();
         config.push_str(&format!(
-            "\n[agents.codex]\nexecutable = \"{}\"\n",
+            "\n[agents.codex]\nexecutable = \"{}\"\nexecution_provenance = \"synthetic\"\n",
             stub.path.display()
         ));
         std::fs::write(&config_path, config).unwrap();
@@ -609,6 +609,20 @@ fn an_unknown_agent_is_refused_with_a_pointer_to_the_listing() {
 }
 
 #[test]
+fn auto_agent_reports_that_phase_four_a_does_not_route() {
+    let fixture = Fixture::new();
+    let task = fixture.write_task("raise.yaml", &task_yaml("  tests:\n    command: true\n"));
+
+    let output = fixture.forge(&["run", &task, "--agent", "auto"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stderr(&output).contains("automatic agent routing is not implemented in Phase 4A"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
 fn an_agent_without_an_adapter_says_so() {
     let fixture = Fixture::new();
     let task = fixture.write_task("raise.yaml", &task_yaml("  tests:\n    command: true\n"));
@@ -914,6 +928,11 @@ fn experience_commands_query_real_stub_runs_and_export_jsonl_without_network() {
         .collect::<Vec<_>>();
     assert_eq!(records.len(), 8);
     assert!(records.iter().all(|record| record["schema_version"] == 1));
+    assert!(
+        records
+            .iter()
+            .all(|record| record["execution_provenance"] == "synthetic")
+    );
     assert_eq!(records[1]["task"]["classification"]["category"], "bugfix");
     assert_eq!(records[1]["known_cost_usd"], serde_json::Value::Null);
     assert!(records[1]["artifact_paths"].is_array());

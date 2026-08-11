@@ -20,3 +20,8 @@ path = ".forge/forge.db"
 [defaults]
 # agent = "claude"
 timeout_secs = 3600
+
+[routing]
+minimum_total_evidence = 10
+minimum_agent_evidence = 3
+exploration_policy = "compete_when_uncertain"

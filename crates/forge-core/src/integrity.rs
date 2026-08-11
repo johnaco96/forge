@@ -25,7 +25,7 @@ pub enum ProtectionError {
 }
 
 /// The state of a run's evaluation inputs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IntegrityStatus {
     /// No protected path changed, or every change to one was explicitly

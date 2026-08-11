@@ -11,6 +11,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::ids::RunId;
+use crate::routing::{ExplorationPolicy, MinimumRoutingEvidence};
+use crate::run::ExecutionProvenance;
 
 /// Directory Forge owns inside a repository.
 pub const FORGE_DIR: &str = ".forge";
@@ -81,12 +83,42 @@ pub struct DefaultsConfig {
     pub timeout_secs: u64,
 }
 
+/// Conservative readiness settings for the future automatic router.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingConfig {
+    pub minimum_total_evidence: u64,
+    pub minimum_agent_evidence: u64,
+    #[serde(default)]
+    pub exploration_policy: ExplorationPolicy,
+}
+
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        let minimum = MinimumRoutingEvidence::default();
+        Self {
+            minimum_total_evidence: minimum.total,
+            minimum_agent_evidence: minimum.per_agent,
+            exploration_policy: ExplorationPolicy::default(),
+        }
+    }
+}
+
+impl RoutingConfig {
+    pub fn minimum_evidence(&self) -> MinimumRoutingEvidence {
+        MinimumRoutingEvidence {
+            total: self.minimum_total_evidence,
+            per_agent: self.minimum_agent_evidence,
+        }
+    }
+}
+
 /// Per-agent configuration, keyed by agent id under `[agents.<id>]`.
 ///
-/// Only `executable`, `model`, `timeout_secs`, and `extra_args` have meaning to
-/// Forge. Everything else is collected into [`Self::settings`] and passed to the
-/// adapter uninterpreted, so a harness-specific knob never requires a change to
-/// the core model.
+/// `executable`, `model`, `timeout_secs`, `extra_args`, and
+/// `execution_provenance` have meaning to Forge. Everything else is collected
+/// into [`Self::settings`] and passed to the adapter uninterpreted, so a
+/// harness-specific knob never requires a core change.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSettings {
     /// Overrides the executable the adapter looks for on `PATH`. Useful for a
@@ -101,6 +133,11 @@ pub struct AgentSettings {
     /// Extra arguments appended to the agent's command line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
+    /// Explicit override for deterministic/stub infrastructure executions.
+    /// Normal CLI executions default to `live`; Forge never infers this from
+    /// the executable path or agent name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_provenance: Option<ExecutionProvenance>,
     /// Harness-specific keys. Forge never interprets these.
     #[serde(default, flatten)]
     pub settings: BTreeMap<String, String>,
@@ -114,6 +151,8 @@ pub struct ForgeConfig {
     pub workspaces: WorkspacesConfig,
     pub store: StoreConfig,
     pub defaults: DefaultsConfig,
+    #[serde(default)]
+    pub routing: RoutingConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, AgentSettings>,
 }
@@ -137,6 +176,7 @@ impl ForgeConfig {
                 agent: Some("claude".to_string()),
                 timeout_secs: 3600,
             },
+            routing: RoutingConfig::default(),
             agents: BTreeMap::new(),
         }
     }
@@ -151,6 +191,14 @@ impl ForgeConfig {
         self.agent(agent_id)
             .timeout_secs
             .unwrap_or(self.defaults.timeout_secs)
+    }
+
+    /// Provenance asserted by the execution caller. Normal configured agents
+    /// are live; deterministic test harnesses must opt into `synthetic`.
+    pub fn execution_provenance_for(&self, agent_id: &str) -> ExecutionProvenance {
+        self.agent(agent_id)
+            .execution_provenance
+            .unwrap_or(ExecutionProvenance::Live)
     }
 
     pub fn load(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
@@ -220,6 +268,16 @@ impl ForgeConfig {
                 "defaults.timeout_secs must be greater than zero".into(),
             ));
         }
+        if self.routing.minimum_total_evidence == 0 {
+            return Err(ConfigError::Invalid(
+                "routing.minimum_total_evidence must be greater than zero".into(),
+            ));
+        }
+        if self.routing.minimum_agent_evidence == 0 {
+            return Err(ConfigError::Invalid(
+                "routing.minimum_agent_evidence must be greater than zero".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -254,11 +312,18 @@ impl ForgeConfig {
              agent = \"claude\"\n\
              timeout_secs = {timeout}\n\
              \n\
+             [routing]\n\
+             # Readiness thresholds for future automatic routing. Phase 4A does not select.\n\
+             minimum_total_evidence = {minimum_total}\n\
+             minimum_agent_evidence = {minimum_agent}\n\
+             exploration_policy = \"{exploration}\"\n\
+             \n\
              # Per-agent overrides. Unrecognized keys are passed to the adapter.\n\
              # [agents.claude]\n\
              # executable = \"claude\"\n\
              # model = \"opus\"\n\
              # timeout_secs = 1800\n\
+             # execution_provenance = \"synthetic\" # only for deterministic stubs\n\
              # permission_mode = \"acceptEdits\"\n",
             version = default.version,
             name = default.repository.name,
@@ -267,6 +332,13 @@ impl ForgeConfig {
             keep = default.workspaces.keep_after_run,
             store_path = default.store.path,
             timeout = default.defaults.timeout_secs,
+            minimum_total = default.routing.minimum_total_evidence,
+            minimum_agent = default.routing.minimum_agent_evidence,
+            exploration = match default.routing.exploration_policy {
+                ExplorationPolicy::None => "none",
+                ExplorationPolicy::CompeteWhenUncertain => "compete_when_uncertain",
+                ExplorationPolicy::PeriodicCompetition => "periodic_competition",
+            },
         )
     }
 }
@@ -385,6 +457,56 @@ mod tests {
             config.validate(),
             Err(ConfigError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn routing_defaults_are_backwards_compatible_and_conservative() {
+        let raw = r#"
+version = 1
+[repository]
+name = "forge"
+[workspaces]
+root = ".forge/worktrees"
+branch_prefix = "forge/"
+keep_after_run = false
+[store]
+path = ".forge/forge.db"
+[defaults]
+agent = "claude"
+timeout_secs = 3600
+"#;
+        let config: ForgeConfig = toml::from_str(raw).unwrap();
+        assert_eq!(config.routing, RoutingConfig::default());
+        assert_eq!(
+            config.execution_provenance_for("claude"),
+            ExecutionProvenance::Live
+        );
+    }
+
+    #[test]
+    fn stub_provenance_is_an_explicit_typed_override() {
+        let mut config = ForgeConfig::default_for("forge");
+        config.agents.insert(
+            "local".into(),
+            AgentSettings {
+                execution_provenance: Some(ExecutionProvenance::Synthetic),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            config.execution_provenance_for("local"),
+            ExecutionProvenance::Synthetic
+        );
+    }
+
+    #[test]
+    fn routing_thresholds_must_be_nonzero() {
+        let mut config = ForgeConfig::default_for("forge");
+        config.routing.minimum_agent_evidence = 0;
+        assert!(config.validate().is_err());
+        config.routing.minimum_agent_evidence = 1;
+        config.routing.minimum_total_evidence = 0;
+        assert!(config.validate().is_err());
     }
 
     #[test]

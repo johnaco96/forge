@@ -9,9 +9,125 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::ids::{TaskId, validate_id};
 use crate::integrity::ProtectionPolicy;
+
+/// Immutable identity of an exact serialized task definition.
+///
+/// New revisions are content-addressed. Migrated databases may use the
+/// reserved `legacy:<task-id>` form for the only snapshot recoverable from a
+/// schema that did not preserve revisions.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TaskRevisionId(String);
+
+impl TaskRevisionId {
+    pub fn for_definition(definition_json: &str) -> Self {
+        let digest = Sha256::digest(definition_json.as_bytes());
+        let hash = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Self(format!("TR-{hash}"))
+    }
+
+    pub fn from_stored(raw: impl Into<String>) -> Result<Self, TaskRevisionError> {
+        let raw = raw.into();
+        if raw.is_empty() {
+            Err(TaskRevisionError::InvalidId("revision ID is empty".into()))
+        } else {
+            Ok(Self(raw))
+        }
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TaskRevisionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum TaskRevisionError {
+    #[error("failed to serialize a task revision")]
+    Serialize(#[from] serde_json::Error),
+    #[error("invalid task revision: {0}")]
+    InvalidId(String),
+    #[error("stored revision `{revision_id}` does not describe task `{task_id}`")]
+    Mismatch {
+        revision_id: TaskRevisionId,
+        task_id: TaskId,
+    },
+}
+
+/// An owned, immutable snapshot of the exact task semantics being routed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TaskRevision {
+    revision_id: TaskRevisionId,
+    task: EngineeringTask,
+}
+
+impl<'de> Deserialize<'de> for TaskRevision {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct StoredRevision {
+            revision_id: TaskRevisionId,
+            task: EngineeringTask,
+        }
+
+        let stored = StoredRevision::deserialize(deserializer)?;
+        Self::from_stored(stored.revision_id, stored.task).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TaskRevision {
+    pub fn snapshot(task: EngineeringTask) -> Result<Self, TaskRevisionError> {
+        let definition_json = serde_json::to_string(&task)?;
+        Ok(Self {
+            revision_id: TaskRevisionId::for_definition(&definition_json),
+            task,
+        })
+    }
+
+    /// Reconstructs a persisted revision, validating content-addressed IDs.
+    /// Legacy IDs are accepted only for their matching logical task.
+    pub fn from_stored(
+        revision_id: TaskRevisionId,
+        task: EngineeringTask,
+    ) -> Result<Self, TaskRevisionError> {
+        let definition_json = serde_json::to_string(&task)?;
+        let expected = TaskRevisionId::for_definition(&definition_json);
+        let valid = revision_id == expected
+            || revision_id
+                .as_str()
+                .strip_prefix("legacy:")
+                .is_some_and(|task_id| task_id == task.task_id.as_str());
+        if !valid {
+            return Err(TaskRevisionError::Mismatch {
+                revision_id,
+                task_id: task.task_id,
+            });
+        }
+        Ok(Self { revision_id, task })
+    }
+
+    pub fn revision_id(&self) -> &TaskRevisionId {
+        &self.revision_id
+    }
+
+    pub fn task(&self) -> &EngineeringTask {
+        &self.task
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum TaskError {

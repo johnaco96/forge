@@ -61,7 +61,10 @@ pub async fn run(args: CompeteArgs) -> Result<CompeteExit> {
     let competitors = agent_ids
         .iter()
         .zip(adapters.iter())
-        .map(|(agent_id, adapter)| Competitor::new(agent_id, adapter.as_ref()))
+        .map(|(agent_id, adapter)| {
+            Competitor::new(agent_id, adapter.as_ref())
+                .with_execution_provenance(runner.config().execution_provenance_for(agent_id))
+        })
         .collect();
 
     let mut request = ExperimentRequest::new(task.clone());

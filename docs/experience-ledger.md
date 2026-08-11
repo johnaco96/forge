@@ -21,6 +21,13 @@ already overwritten a task row cannot reconstruct earlier values that were
 never persisted; immutable revision capture prevents that loss for all runs
 created after migration.
 
+Migration 0007 adds explicit execution provenance. Historical rows become
+`unknown` because Forge cannot determine whether an old executable was genuine
+or a stub without guessing. New normal CLI runs are `live`; deterministic test
+stubs declare `synthetic`. Provenance is immutable once a run is inserted.
+These values affect routing trust policy only—ordinary Phase 3 queries continue
+to include every provenance.
+
 All historical commands are read-only. They describe what Forge recorded; they
 do not recommend an agent or influence execution.
 
@@ -166,6 +173,7 @@ independent JSON object with `schema_version: 1` and includes:
   repository, classification, components, and tags;
 - the immutable task revision ID bound to the run;
 - exact agent/harness/model/tools/settings configuration;
+- explicit live, synthetic, imported, or unknown execution provenance;
 - run status, separate agent execution status, Forge outcome, and failure
   reason;
 - integrity evidence, evaluation results, evaluator metrics, and warnings;
@@ -180,8 +188,10 @@ without silently producing enormous records.
 
 ## Phase boundary
 
-Phase 3 makes historical evidence retrievable and inspectable. It does not add
-`--agent auto`, performance recommendations, learned routing, automatic task
+Phase 3 makes historical evidence retrievable and inspectable. Phase 4A adds a
+separate conservative routing-evidence policy over that ledger; synthetic and
+unknown evidence remain queryable here but are excluded from production routing
+by default. See [`routing.md`](routing.md). Forge still does not add `--agent
+auto`, performance recommendations, learned routing, automatic task
 classification, multi-agent teamwork, PostgreSQL, a graph database, or a web
-dashboard. Any future policy can consume the exported or typed evidence, but it
-must be reviewed as a separate architecture milestone.
+dashboard.

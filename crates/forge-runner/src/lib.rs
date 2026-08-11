@@ -48,7 +48,9 @@ use forge_core::ids::{AgentId, ExperimentId};
 use forge_core::integrity::EvaluationIntegrity;
 use forge_core::patch::{PatchPolicy, PatchWarning};
 use forge_core::result::{Evaluation, Verdict};
-use forge_core::run::{AgentExecution, AgentRun, PatchSummary, RunOutcome, RunStatus};
+use forge_core::run::{
+    AgentExecution, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
+};
 use forge_core::security::SecurityPosture;
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
@@ -74,6 +76,9 @@ pub struct RunRequest {
     pub timeout: Option<Duration>,
     /// Overrides `workspaces.keep_after_run`.
     pub keep_workspace: Option<bool>,
+    /// Must be asserted explicitly by the caller. The generic runner defaults
+    /// to unknown rather than guessing that a custom adapter is live.
+    pub execution_provenance: ExecutionProvenance,
 }
 
 /// A base commit resolved by Forge before execution begins.
@@ -116,6 +121,7 @@ impl ExperimentRequest {
 pub struct Competitor<'a> {
     pub agent_id: String,
     pub adapter: &'a dyn AgentAdapter,
+    pub execution_provenance: ExecutionProvenance,
 }
 
 impl<'a> Competitor<'a> {
@@ -123,7 +129,13 @@ impl<'a> Competitor<'a> {
         Self {
             agent_id: agent_id.into(),
             adapter,
+            execution_provenance: ExecutionProvenance::Unknown,
         }
+    }
+
+    pub fn with_execution_provenance(mut self, provenance: ExecutionProvenance) -> Self {
+        self.execution_provenance = provenance;
+        self
     }
 }
 
@@ -135,6 +147,7 @@ impl RunRequest {
             base_rev: None,
             timeout: None,
             keep_workspace: None,
+            execution_provenance: ExecutionProvenance::Unknown,
         }
     }
 }
@@ -324,6 +337,7 @@ impl Runner {
             let mut run_request = RunRequest::new(request.task.clone(), &competitor.agent_id);
             run_request.timeout = request.timeout;
             run_request.keep_workspace = request.keep_workspace;
+            run_request.execution_provenance = competitor.execution_provenance;
 
             let result = self
                 .execute_resolved(
@@ -424,6 +438,7 @@ impl Runner {
             agent_config,
             base_commit.as_str(),
         );
+        run.execution_provenance = request.execution_provenance;
         run.security = Some(SecurityPosture::current(adapter.security()));
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());

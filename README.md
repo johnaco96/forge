@@ -38,8 +38,9 @@ base commit into a comparative experiment.
 | Structured benchmark metric contract | ✅ |
 | **Codex adapter and `forge run --agent codex`** | ✅ |
 | **`forge compete task.yaml --agents claude,codex`** | ✅ |
-| **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ Phase 3 review candidate |
-| Learned routing, recommendations, teamwork | ⬜ later |
+| **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ |
+| **Provider-agnostic routing contract and trusted evidence policy** | ✅ Phase 4A review candidate |
+| Automatic/learned routing, recommendations, teamwork | ⬜ later |
 
 ---
 
@@ -84,8 +85,10 @@ forge experiments list
 forge export --format jsonl > forge-runs.jsonl
 ```
 
-These Phase 3 commands describe recorded evidence. They do not select an agent,
-recommend one, or apply a learned routing policy.
+These commands describe recorded evidence. Phase 4A can also produce a trusted,
+reproducible routing-evidence snapshot internally, but does not select an agent,
+recommend one, or apply a learned routing policy. `--agent auto` explicitly
+reports that automatic routing is not implemented.
 
 To run independent attempts from one resolved base and compare their evidence
 without choosing an overall winner:
@@ -175,6 +178,8 @@ See [`docs/evaluation.md`](docs/evaluation.md) for every evaluator category,
 required versus optional policy, structured metric output, and trust rules.
 See [`docs/experience-ledger.md`](docs/experience-ledger.md) for query semantics,
 similarity weights, missing-data rules, and the JSONL schema.
+See [`docs/routing.md`](docs/routing.md) for pre-run features, provenance,
+evidence eligibility, readiness, decision contracts, and reproducibility.
 
 ---
 
@@ -313,6 +318,16 @@ sqlite3 .forge/forge.db \
 
 ### Configuration
 
+Future routing readiness is configured conservatively, although no agent is
+automatically selected in Phase 4A:
+
+```toml
+[routing]
+minimum_total_evidence = 10
+minimum_agent_evidence = 3
+exploration_policy = "compete_when_uncertain"
+```
+
 ```toml
 [agents.claude]
 executable = "claude"          # for a non-standard install
@@ -334,8 +349,13 @@ extra_args = ["--ephemeral"]
 The inspected Codex command, JSONL metadata contract, and security mapping are
 documented in [`docs/codex-cli.md`](docs/codex-cli.md).
 
-Unrecognized keys under `[agents.<id>]` are passed to that adapter unchanged;
-Forge core never interprets them.
+`executable`, `model`, `timeout_secs`, `extra_args`, and
+`execution_provenance` are typed Forge settings. Other keys under
+`[agents.<id>]` are passed to that adapter unchanged.
+
+Normal CLI executions are explicitly recorded as `live`. Deterministic local
+stub configurations must declare `execution_provenance = "synthetic"`; older
+database rows migrate to `unknown`, never guessed `live`.
 
 ---
 
@@ -388,23 +408,17 @@ What Forge *does* guarantee, with tests:
 ## Architecture
 
 ```text
-                        forge-cli
-                            │
-                       forge-runner          the pipeline
-                            │
-       ┌────────────┬───────┴───────┬────────────┐
-       ▼            ▼               ▼            ▼
-  forge-agent   forge-eval    forge-executor  forge-store
-  (adapters)  (trust boundary)  (isolation)    (ledger)
-       │            │               │            │
-       └────────────┴───────┬───────┴────────────┘
-                            ▼
-                       forge-core
-              (task, run, event, workspace,
-               evaluation, metric — no I/O)
-                            │
-                            ▼
-                        forge-git
+forge-cli ── forge-runner (execution pipeline)
+             ├── forge-agent      provider adapters
+             ├── forge-eval       evaluation trust boundary
+             ├── forge-executor   process/workspace isolation
+             ├── forge-store      experience ledger
+             └── forge-git        repository mechanics
+
+forge-router (future CLI/runner consumer; no selection algorithm in Phase 4A)
+└── forge-store          trusted routing evidence query
+
+All provider-agnostic domain contracts converge on forge-core.
 ```
 
 | Crate | Responsibility |
@@ -415,6 +429,7 @@ What Forge *does* guarantee, with tests:
 | `forge-agent` | The `AgentAdapter` interface, shared prompt contract, and provider adapters. |
 | `forge-eval` | Independent evaluation — the trust boundary. |
 | `forge-store` | The SQLite experience ledger. |
+| `forge-router` | Candidate resolution and trusted evidence boundary; no selection algorithm yet. |
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
 | `forge-cli` | The `forge` binary. |
 
