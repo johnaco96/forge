@@ -13,6 +13,7 @@ use forge_executor::find_executable;
 
 use crate::adapter::AgentAdapter;
 use crate::claude::ClaudeAdapter;
+use crate::codex::CodexAdapter;
 use crate::error::{AgentError, AgentResult};
 
 /// Whether an agent can be run on this machine.
@@ -57,17 +58,7 @@ impl AgentRegistry {
         Self {
             descriptors: vec![
                 crate::claude::descriptor(),
-                descriptor(
-                    "codex",
-                    "OpenAI Codex",
-                    "codex-cli",
-                    Some("codex"),
-                    vec![
-                        Capability::EditFiles,
-                        Capability::RunCommands,
-                        Capability::ReportsUsage,
-                    ],
-                ),
+                crate::codex::descriptor(),
                 descriptor(
                     "pi",
                     "Pi",
@@ -116,13 +107,16 @@ impl AgentRegistry {
             (AdapterStatus::Implemented, "claude") => {
                 Ok(Box::new(ClaudeAdapter::from_config(config)))
             }
+            (AdapterStatus::Implemented, "codex") => {
+                Ok(Box::new(CodexAdapter::from_config(config)))
+            }
             (AdapterStatus::Implemented, other) => Err(AgentError::Unavailable {
                 agent: other.to_string(),
                 reason: "marked implemented but not constructible; this is a Forge bug".to_string(),
             }),
             (AdapterStatus::Planned, other) => Err(AgentError::NotImplemented {
                 agent: other.to_string(),
-                reason: "only the Claude Code adapter exists so far".to_string(),
+                reason: "no adapter has been implemented for this agent".to_string(),
             }),
         }
     }
@@ -171,27 +165,29 @@ mod tests {
     }
 
     #[test]
-    fn claude_has_an_adapter_and_the_others_do_not() {
+    fn claude_and_codex_have_adapters_and_pi_does_not() {
         let registry = AgentRegistry::builtin();
         assert_eq!(
             registry.get("claude").unwrap().adapter_status,
             AdapterStatus::Implemented
         );
-        for planned in ["codex", "pi"] {
-            assert_eq!(
-                registry.get(planned).unwrap().adapter_status,
-                AdapterStatus::Planned,
-                "{planned}"
-            );
-        }
+        assert_eq!(
+            registry.get("codex").unwrap().adapter_status,
+            AdapterStatus::Implemented
+        );
+        assert_eq!(
+            registry.get("pi").unwrap().adapter_status,
+            AdapterStatus::Planned
+        );
         assert!(registry.adapter("claude", &config("claude")).is_ok());
+        assert!(registry.adapter("codex", &config("codex")).is_ok());
     }
 
     #[test]
     fn availability_separates_installed_from_implemented() {
         let registry = AgentRegistry::builtin();
-        let codex = registry.get("codex").unwrap();
-        let availability = registry.availability(codex);
+        let pi = registry.get("pi").unwrap();
+        let availability = registry.availability(pi);
 
         // Whether the CLI is installed is independent of whether Forge can
         // drive it, and the summary must not conflate the two.
@@ -247,7 +243,7 @@ mod tests {
 
     #[test]
     fn requesting_a_known_but_unimplemented_agent_explains_why() {
-        let err = adapter_error("codex");
+        let err = adapter_error("pi");
         assert!(matches!(err, AgentError::NotImplemented { .. }), "{err}");
     }
 }

@@ -36,7 +36,8 @@ and record everything.
 | **Claude Code adapter and `forge run`** | ✅ |
 | Protected evaluation inputs, candidate patch policy, security posture | ✅ |
 | Structured benchmark metric contract | ✅ |
-| Codex adapter and `forge compete` | ⬜ after architectural review |
+| **Codex adapter and `forge run --agent codex`** | ✅ |
+| `forge compete` | ⬜ after architectural review |
 | History queries, learned routing, multi-agent | ⬜ later |
 
 ---
@@ -47,8 +48,8 @@ and record everything.
 
 - **Rust** 1.93 or newer (`cargo build --release`)
 - **Git** 2.5 or newer (worktree support)
-- **Claude Code** on your `PATH`, already authenticated — run `claude` once
-  interactively first. Check with `forge agent list`.
+- **Claude Code or Codex CLI** on your `PATH`, already authenticated. Check
+  exact availability with `forge agent list`.
 - A **Git repository with at least one commit**. Agents work from a commit, so
   uncommitted changes are invisible to them.
 
@@ -60,6 +61,12 @@ forge init
 
 ```bash
 forge run .forge/tasks/my-task.yaml --agent claude
+```
+
+or, through the identical Forge pipeline and prompt contract:
+
+```bash
+forge run .forge/tasks/my-task.yaml --agent codex
 ```
 
 `forge agent list` shows which agents Forge can actually run, and
@@ -129,7 +136,7 @@ validate task → resolve base commit → create run record
       ↓
 create isolated Git worktree from that commit
       ↓
-invoke Claude Code with the task contract    ← untrusted
+invoke the selected coding agent with the task contract    ← untrusted
       ↓
 ──────────────────── TRUST BOUNDARY ────────────────────
       ↓
@@ -245,6 +252,19 @@ timeout_secs = 1800
 permission_mode = "acceptEdits"
 ```
 
+```toml
+[agents.codex]
+executable = "codex"
+model = "gpt-5-codex"
+timeout_secs = 1800
+sandbox_mode = "workspace-write"
+approval_policy = "never"
+extra_args = ["--ephemeral"]
+```
+
+The inspected Codex command, JSONL metadata contract, and security mapping are
+documented in [`docs/codex-cli.md`](docs/codex-cli.md).
+
 Unrecognized keys under `[agents.<id>]` are passed to that adapter unchanged;
 Forge core never interprets them.
 
@@ -254,9 +274,9 @@ Forge core never interprets them.
 
 Read this before pointing Forge at anything you care about.
 
-**Candidate changes are isolated in a Git worktree; agent processes are not
-contained.** Each run starts in a disposable worktree, so ordinary relative
-edits produce a separate candidate and do not alter the primary checkout. A
+**Candidate changes are isolated in a Git worktree; Forge does not independently
+contain agent processes.** Each run starts in a disposable worktree, so ordinary
+relative edits produce a separate candidate and do not alter the primary checkout. A
 Git worktree is not a sandbox: the agent can use absolute or parent paths and
 write anywhere your user account can. Container isolation is the fix, and it
 is not built yet. Every run report states this posture explicitly.
@@ -267,6 +287,13 @@ the build and test commands its instructions ask for. Set
 `permission_mode = "acceptEdits"` under `[agents.claude]` to tighten it, at the
 cost of the agent being unable to run commands.
 
+**Codex runs with its `workspace-write` sandbox and `never` approval policy by
+default.** This is intentionally not reported as Forge host containment. Codex
+constrains model-generated commands to its workspace boundary, while the CLI
+process itself still runs as the invoking user and Forge has not placed it in a
+container. `danger-full-access` is configurable but is reported as unrestricted
+and triggers Forge's unconfined-run warning.
+
 **Consequently: run Forge only on repositories and tasks you would be willing
 to run by hand, on a machine where that is acceptable.**
 
@@ -275,8 +302,8 @@ What Forge *does* guarantee, with tests:
 - It only ever creates or destroys directories inside its configured worktree
   root, and rejects any run or check name that could escape it.
 - Credentials are filtered out of the environment agents and checks inherit;
-  only the specific variables Claude Code needs are allowed back in, and
-  secret-looking values are redacted from captured output before it is stored.
+  only the specific variables each selected harness needs are allowed back in,
+  and secret-looking values are redacted from captured output before it is stored.
 - Evaluation commands run with a conservative environment — they execute code
   an agent just wrote, and have no business seeing credentials.
 - Protected evaluation inputs are compared with the recorded base commit;
@@ -316,17 +343,17 @@ What Forge *does* guarantee, with tests:
 | `forge-core` | The vocabulary. No agent, no database, no execution. |
 | `forge-git` | Repositories, worktrees, diffs. |
 | `forge-executor` | Process execution, environment policy, workspace provisioning. |
-| `forge-agent` | The `AgentAdapter` interface, the shared prompt contract, and the Claude Code adapter. |
+| `forge-agent` | The `AgentAdapter` interface, shared prompt contract, and provider adapters. |
 | `forge-eval` | Independent evaluation — the trust boundary. |
 | `forge-store` | The SQLite experience ledger. |
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
 | `forge-cli` | The `forge` binary. |
 
-Everything Claude-specific lives in one file,
-[`forge-agent/src/claude.rs`](crates/forge-agent/src/claude.rs). The prompt is
-built by [one shared function](crates/forge-agent/src/prompt.rs) with no agent
-parameter — two agents given different instructions could not be meaningfully
-compared.
+Everything provider-specific lives in its adapter file:
+[`claude.rs`](crates/forge-agent/src/claude.rs) and
+[`codex.rs`](crates/forge-agent/src/codex.rs). The prompt is built by
+[one shared function](crates/forge-agent/src/prompt.rs) with no agent parameter
+— two agents given different instructions could not be meaningfully compared.
 
 ### Invariants worth knowing
 
@@ -377,7 +404,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 
 The test suite never invokes a real model or touches the network. Pipeline
 tests drive a fake `AgentAdapter`; CLI tests drive the real binary and real
-adapter against a stub `claude` executable.
+adapters against local stub executables.
 
 To smoke-test against the real Claude Code:
 
@@ -387,6 +414,12 @@ To smoke-test against the real Claude Code:
 
 ```bash
 forge run task.yaml --agent claude
+```
+
+The same controlled fixture can be run with Codex:
+
+```bash
+forge run task.yaml --agent codex
 ```
 
 The fixture ships failing tests and an unimplemented function, so a `PASS`

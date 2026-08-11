@@ -17,6 +17,49 @@ struct StubClaude {
     args_file: PathBuf,
 }
 
+/// A stub `codex` that emits the documented `codex exec --json` JSONL stream.
+struct StubCodex {
+    path: PathBuf,
+    args_file: PathBuf,
+}
+
+impl StubCodex {
+    fn new(dir: &Path, name: &str, body: &str, stream: &str, exit_code: i32) -> Self {
+        let path = dir.join(name);
+        let args_file = dir.join(format!("{name}.args"));
+        let script = format!(
+            "#!/bin/sh\n\
+             # Stub Codex CLI. No network or model process is started.\n\
+             : > '{args}'\n\
+             for arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '{args}'; done\n\
+             {body}\n\
+             cat <<'FORGE_JSONL'\n{stream}\nFORGE_JSONL\n\
+             exit {exit_code}\n",
+            args = args_file.display(),
+        );
+        std::fs::write(&path, script).expect("write Codex stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+                .expect("chmod Codex stub");
+        }
+        Self { path, args_file }
+    }
+
+    fn recorded_args(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.args_file)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn recorded_raw(&self) -> String {
+        std::fs::read_to_string(&self.args_file).unwrap_or_default()
+    }
+}
+
 impl StubClaude {
     /// `body` is shell run inside the workspace, standing in for the agent's
     /// edits. `envelope` is what the stub prints on stdout.
@@ -63,6 +106,13 @@ impl StubClaude {
 
 const SUCCESS_ENVELOPE: &str = r#"{"is_error":false,"subtype":"success","result":"I updated the value.","session_id":"stub-session","total_cost_usd":0.0123,"num_turns":3,"usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":5000},"permission_denials":[],"terminal_reason":"completed","type":"result","duration_ms":1234}"#;
 
+const CODEX_SUCCESS_STREAM: &str = r#"{"type":"thread.started","thread_id":"stub-codex-thread"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item-1","type":"command_execution","command":"edit value.txt","status":"completed"}}
+{"type":"item.completed","item":{"id":"item-2","type":"file_change","changes":[{"path":"value.txt","kind":"update"}],"status":"completed"}}
+{"type":"item.completed","item":{"id":"item-3","type":"agent_message","text":"I updated the value."}}
+{"type":"turn.completed","usage":{"input_tokens":200,"cached_input_tokens":150,"output_tokens":40,"reasoning_output_tokens":10}}"#;
+
 struct Fixture {
     temp: TempDir,
     repo: PathBuf,
@@ -102,12 +152,31 @@ impl Fixture {
         StubClaude::new(self.temp.path(), name, body, envelope, exit_code)
     }
 
+    fn codex_stub(&self, body: &str) -> StubCodex {
+        self.codex_stub_with("codex-stub", body, CODEX_SUCCESS_STREAM, 0)
+    }
+
+    fn codex_stub_with(&self, name: &str, body: &str, stream: &str, exit_code: i32) -> StubCodex {
+        StubCodex::new(self.temp.path(), name, body, stream, exit_code)
+    }
+
     /// Points `[agents.claude]` at the stub.
     fn use_stub(&self, stub: &StubClaude) {
         let config_path = self.repo.join(".forge/config.toml");
         let mut config = std::fs::read_to_string(&config_path).unwrap();
         config.push_str(&format!(
             "\n[agents.claude]\nexecutable = \"{}\"\n",
+            stub.path.display()
+        ));
+        std::fs::write(&config_path, config).unwrap();
+    }
+
+    /// Points `[agents.codex]` at a local no-network stub.
+    fn use_codex_stub(&self, stub: &StubCodex) {
+        let config_path = self.repo.join(".forge/config.toml");
+        let mut config = std::fs::read_to_string(&config_path).unwrap();
+        config.push_str(&format!(
+            "\n[agents.codex]\nexecutable = \"{}\"\n",
             stub.path.display()
         ));
         std::fs::write(&config_path, config).unwrap();
@@ -230,6 +299,111 @@ fn the_adapter_invokes_claude_with_the_documented_contract() {
     assert!(invocation.contains("You are not the judge of this work"));
     assert!(invocation.contains("Do not modify anything outside that directory"));
     assert!(invocation.contains("worktrees/R-0001"));
+}
+
+#[test]
+fn codex_runs_end_to_end_through_the_same_pipeline_without_network() {
+    let fixture = Fixture::new();
+    let stub = fixture.codex_stub("echo 2 > value.txt");
+    fixture.use_codex_stub(&stub);
+    let task = fixture.write_task(
+        "raise-codex.yaml",
+        &task_yaml("  tests:\n    command: grep -q '^2$' value.txt\n"),
+    );
+
+    let output = fixture.forge(&["run", &task, "--agent", "codex"]);
+    let text = stdout(&output);
+    assert!(output.status.success(), "{text}\n{}", stderr(&output));
+    assert!(text.contains("codex (codex-cli)"), "{text}");
+    assert!(text.contains("240 (200 in / 40 out)"), "{text}");
+    assert!(
+        text.contains("sandbox=workspace-write, approval=never"),
+        "{text}"
+    );
+    assert!(text.contains("Evaluation integrity"), "{text}");
+    assert!(text.contains("clean"), "{text}");
+    assert!(text.contains("PASS"), "{text}");
+    assert_eq!(fixture.read("value.txt"), "1\n");
+
+    let args = stub.recorded_args();
+    assert!(args.contains(&"exec".to_string()), "{args:?}");
+    for expected in [
+        "--json",
+        "--sandbox",
+        "workspace-write",
+        "--ask-for-approval",
+        "never",
+        "--cd",
+    ] {
+        assert!(args.contains(&expected.to_string()), "{args:?}");
+    }
+    let invocation = stub.recorded_raw();
+    assert!(invocation.contains("# Engineering task T-1042"));
+    assert!(invocation.contains("You are not the judge of this work"));
+    assert!(invocation.contains("worktrees/R-0001"));
+
+    let stdout_log = fixture.read(".forge/runs/R-0001/agent.stdout.log");
+    assert!(stdout_log.contains("stub-codex-thread"), "{stdout_log}");
+}
+
+#[test]
+fn a_nonzero_codex_exit_is_separate_from_a_passing_forge_outcome() {
+    let fixture = Fixture::new();
+    let stub = fixture.codex_stub_with(
+        "codex-nonzero",
+        "echo 2 > value.txt",
+        CODEX_SUCCESS_STREAM,
+        7,
+    );
+    fixture.use_codex_stub(&stub);
+    let task = fixture.write_task(
+        "raise-codex.yaml",
+        &task_yaml("  tests:\n    command: grep -q '^2$' value.txt\n"),
+    );
+
+    let output = fixture.forge(&["run", &task, "--agent", "codex"]);
+    let text = stdout(&output);
+    assert!(output.status.success(), "{text}\n{}", stderr(&output));
+    assert!(text.contains("exited non-zero"), "{text}");
+    assert!(text.contains("Exit code  7"), "{text}");
+    assert!(text.contains("PASS"), "{text}");
+}
+
+#[test]
+fn a_codex_timeout_is_enforced_and_recorded() {
+    let fixture = Fixture::new();
+    let stub = fixture.codex_stub_with("codex-hangs", "sleep 30", CODEX_SUCCESS_STREAM, 0);
+    fixture.use_codex_stub(&stub);
+    let task = fixture.write_task(
+        "raise-codex.yaml",
+        &task_yaml("  tests:\n    command: true\n"),
+    );
+
+    let started = std::time::Instant::now();
+    let output = fixture.forge(&["run", &task, "--agent", "codex", "--timeout-secs", "1"]);
+    let text = stdout(&output);
+    assert_eq!(output.status.code(), Some(2), "{text}\n{}", stderr(&output));
+    assert!(text.contains("timed out"), "{text}");
+    assert!(text.contains("NO CHANGE"), "{text}");
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn a_missing_codex_executable_fails_before_workspace_creation() {
+    let fixture = Fixture::new();
+    let config_path = fixture.repo.join(".forge/config.toml");
+    let mut config = std::fs::read_to_string(&config_path).unwrap();
+    config.push_str("\n[agents.codex]\nexecutable = \"forge-codex-definitely-not-installed\"\n");
+    std::fs::write(&config_path, config).unwrap();
+    let task = fixture.write_task(
+        "raise-codex.yaml",
+        &task_yaml("  tests:\n    command: true\n"),
+    );
+
+    let output = fixture.forge(&["run", &task, "--agent", "codex"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(stderr(&output).contains("PATH"), "{}", stderr(&output));
+    assert!(!fixture.repo.join(".forge/worktrees/R-0001").exists());
 }
 
 #[test]
@@ -360,10 +534,10 @@ fn an_agent_without_an_adapter_says_so() {
     let fixture = Fixture::new();
     let task = fixture.write_task("raise.yaml", &task_yaml("  tests:\n    command: true\n"));
 
-    let output = fixture.forge(&["run", &task, "--agent", "codex"]);
+    let output = fixture.forge(&["run", &task, "--agent", "pi"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        stderr(&output).contains("Claude Code adapter"),
+        stderr(&output).contains("no adapter"),
         "{}",
         stderr(&output)
     );

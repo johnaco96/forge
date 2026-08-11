@@ -11,12 +11,14 @@
 
 pub mod adapter;
 pub mod claude;
+pub mod codex;
 pub mod error;
 pub mod prompt;
 pub mod registry;
 
 pub use adapter::{AgentAdapter, RunContext};
 pub use claude::ClaudeAdapter;
+pub use codex::CodexAdapter;
 pub use error::{AgentError, AgentResult};
 pub use prompt::build_agent_prompt;
 pub use registry::{AgentRegistry, Availability};
