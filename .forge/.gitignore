@@ -1,0 +1,7 @@
+# Written by `forge init`.
+# Configuration and task definitions are tracked; run output is not.
+worktrees/
+runs/
+forge.db
+forge.db-wal
+forge.db-shm

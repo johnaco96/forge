@@ -1,0 +1,25 @@
+[package]
+name = "forge-runner"
+description = "The run pipeline: provision, execute, evaluate, persist."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-agent.workspace = true
+forge-core.workspace = true
+forge-eval.workspace = true
+forge-executor.workspace = true
+forge-git.workspace = true
+forge-store.workspace = true
+
+chrono.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

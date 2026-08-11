@@ -1,0 +1,33 @@
+# Forge smoke-test task.
+#
+# The repository ships with failing tests and an unimplemented function. A
+# passing run therefore requires the agent to have done real work: Forge runs
+# `cargo test` itself, and an unchanged repository cannot pass.
+
+task_id: T-0001
+repository: median
+objective: >-
+  Implement the `median` function in src/lib.rs so that it returns the median of
+  the given values, averaging the middle two when the count is even, and None
+  when there are no values.
+
+constraints:
+  - The existing tests must pass unmodified
+  - The public signature of `median` must not change
+  - No new dependencies may be added
+
+protected_paths:
+  - tests/**
+
+evaluation:
+  tests:
+    command: cargo test
+    timeout_secs: 300
+  lint:
+    command: cargo clippy -- -D warnings
+    timeout_secs: 300
+
+metadata:
+  task_type: implementation
+  language: rust
+  subsystem: core

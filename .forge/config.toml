@@ -1,0 +1,22 @@
+# Forge configuration for this repository.
+# See docs/ for what each setting affects.
+version = 1
+
+[repository]
+# Tasks must name this repository in their `repository` field.
+name = "forge"
+
+[workspaces]
+# Agents never touch your working tree; each run gets a worktree here.
+root = ".forge/worktrees"
+branch_prefix = "forge/"
+# Keep worktrees after a run finishes (useful when debugging a run).
+keep_after_run = false
+
+[store]
+# Experience ledger: runs, events, evaluations, metrics.
+path = ".forge/forge.db"
+
+[defaults]
+# agent = "claude"
+timeout_secs = 3600

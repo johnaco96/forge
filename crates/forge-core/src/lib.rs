@@ -1,0 +1,56 @@
+//! Forge's core domain model.
+//!
+//! This crate defines *what Forge knows about*: tasks, agents, runs, events,
+//! workspaces, and evaluations. It deliberately depends on no agent, no
+//! database, and no execution mechanism, so those can all be replaced without
+//! touching the vocabulary the rest of the system shares.
+//!
+//! The shape of a run:
+//!
+//! ```text
+//! EngineeringTask ──▶ AgentRun ──▶ Event stream
+//!                        │
+//!                        ├──▶ Workspace   (isolated checkout)
+//!                        ├──▶ PatchSummary (what changed)
+//!                        └──▶ Evaluation  (Forge's own judgment)
+//! ```
+
+#![deny(rust_2018_idioms)]
+
+pub mod agent;
+pub mod config;
+pub mod events;
+pub mod ids;
+pub mod integrity;
+pub mod patch;
+pub mod result;
+pub mod run;
+pub mod security;
+pub mod task;
+pub mod workspace;
+
+pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
+pub use config::{AgentSettings, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout};
+pub use events::{Event, EventPayload, EventSink, NullSink, RecordingSink};
+pub use ids::{AgentId, ExperimentId, IdError, RunId, TaskId};
+pub use integrity::{
+    CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,
+};
+pub use patch::{
+    CandidatePatch, ChangeKind, DeltaEntry, ExcludedEntry, ExclusionReason, PatchPolicy,
+    PatchWarning, WarningKind, WorkspaceDelta,
+};
+pub use result::{
+    BenchmarkMetrics, CheckResult, Dimension, Direction, Evaluation, Metric, MetricName,
+    MetricNameError, MetricValue, Score, ScoreError, Verdict,
+};
+pub use run::{
+    AgentExecution, AgentExecutionStatus, AgentRun, PatchSummary, RunArtifacts, RunError,
+    RunOutcome, RunStatus, Usage,
+};
+pub use security::{AgentSecurity, HostContainment, SecurityPosture, WorkspaceIsolation};
+pub use task::{
+    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskError,
+    TaskMetadata,
+};
+pub use workspace::{Workspace, WorkspaceKind};

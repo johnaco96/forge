@@ -1,0 +1,15 @@
+[package]
+name = "forge-git"
+description = "Git repository, worktree, and diff operations for Forge."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+forge-core.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

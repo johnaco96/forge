@@ -1,0 +1,33 @@
+# An example Forge task. Copy this file and edit it.
+#
+# A task separates three things:
+#   - objective:   what the agent should achieve, in prose
+#   - constraints: invariants the change must not violate
+#   - evaluation:  commands Forge runs itself to judge the result
+#
+# Forge never asks the agent whether it succeeded.
+
+task_id: T-0001
+repository: forge
+objective: >-
+  Describe the engineering outcome you want, not the implementation steps.
+  State what "better" means here so the result can be measured.
+
+constraints:
+  - All existing tests must pass
+  - Public API must remain source-compatible
+
+evaluation:
+  tests:
+    command: cargo test --workspace
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+  # benchmark:
+  #   command: ./bench/run.sh
+  #   timeout_secs: 1800
+
+# Used later to compare agent performance across kinds of work.
+metadata:
+  task_type: refactor
+  language: rust
+  subsystem: core
