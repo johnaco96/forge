@@ -15,6 +15,7 @@ use forge_core::ids::{ExperimentId, RunId, TaskId};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{AgentExecutionStatus, AgentRun, PatchSummary, RunOutcome, RunStatus};
 use forge_core::task::EngineeringTask;
+use sha2::{Digest, Sha256};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Row, SqlitePool};
 
@@ -44,6 +45,46 @@ pub struct RunSummary {
     pub files_changed: Option<u64>,
     pub lines_changed: Option<u64>,
     pub cost_usd: Option<f64>,
+}
+
+/// Immutable identity of the exact task definition bound to a run.
+///
+/// New revisions are content-addressed. Migrated databases may contain the
+/// reserved `legacy:<task-id>` form for the one snapshot recoverable from the
+/// pre-revision schema.
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(transparent)]
+pub struct TaskRevisionId(String);
+
+impl TaskRevisionId {
+    fn for_definition(definition_json: &str) -> Self {
+        let digest = Sha256::digest(definition_json.as_bytes());
+        let hash = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        Self(format!("TR-{hash}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub(crate) fn from_stored(raw: String) -> StoreResult<Self> {
+        if raw.is_empty() {
+            Err(StoreError::Corrupt("empty task revision ID".into()))
+        } else {
+            Ok(Self(raw))
+        }
+    }
+}
+
+impl std::fmt::Display for TaskRevisionId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
 }
 
 /// The experience ledger.
@@ -165,29 +206,126 @@ impl Store {
         Ok(())
     }
 
-    pub async fn upsert_task(&self, task: &EngineeringTask) -> StoreResult<()> {
+    /// Updates the logical task while preserving and returning its immutable
+    /// content revision. Equal serialized definitions reuse one revision.
+    pub async fn upsert_task(&self, task: &EngineeringTask) -> StoreResult<TaskRevisionId> {
+        let classification = task.effective_classification();
+        let definition_json = serde_json::to_string(task)?;
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO tasks (task_id, repository, objective, task_type, language, subsystem, definition_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "INSERT INTO tasks (
+                 task_id, repository, objective, task_type, language, subsystem,
+                 definition_json, created_at, category, domain, difficulty
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT (task_id) DO UPDATE SET
                  repository = excluded.repository,
                  objective = excluded.objective,
                  task_type = excluded.task_type,
                  language = excluded.language,
                  subsystem = excluded.subsystem,
-                 definition_json = excluded.definition_json",
+                 definition_json = excluded.definition_json,
+                 category = excluded.category,
+                 domain = excluded.domain,
+                 difficulty = excluded.difficulty",
         )
         .bind(task.task_id.as_str())
         .bind(&task.repository)
         .bind(&task.objective)
         .bind(task.metadata.task_type.as_deref())
-        .bind(task.metadata.language.as_deref())
+        .bind(classification.language.as_deref())
         .bind(task.metadata.subsystem.as_deref())
-        .bind(serde_json::to_string(task)?)
+        .bind(&definition_json)
         .bind(now())
-        .execute(&self.pool)
+        .bind(classification.category.as_deref())
+        .bind(classification.domain.as_deref())
+        .bind(classification.difficulty.as_deref())
+        .execute(&mut *tx)
         .await?;
-        Ok(())
+
+        let existing_revision: Option<String> = sqlx::query_scalar(
+            "SELECT revision_id FROM task_revisions
+             WHERE task_id = ?1 AND definition_json = ?2
+             ORDER BY created_at, revision_id LIMIT 1",
+        )
+        .bind(task.task_id.as_str())
+        .bind(&definition_json)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let revision_id = match existing_revision {
+            Some(raw) => TaskRevisionId::from_stored(raw)?,
+            None => {
+                let revision_id = TaskRevisionId::for_definition(&definition_json);
+                sqlx::query(
+                    "INSERT INTO task_revisions (
+                        revision_id, task_id, repository, objective, category, language,
+                        domain, difficulty, definition_json, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )
+                .bind(revision_id.as_str())
+                .bind(task.task_id.as_str())
+                .bind(&task.repository)
+                .bind(&task.objective)
+                .bind(classification.category.as_deref())
+                .bind(classification.language.as_deref())
+                .bind(classification.domain.as_deref())
+                .bind(classification.difficulty.as_deref())
+                .bind(&definition_json)
+                .bind(now())
+                .execute(&mut *tx)
+                .await?;
+                for component in &task.components {
+                    sqlx::query(
+                        "INSERT INTO task_revision_components (revision_id, component)
+                         VALUES (?1, ?2)",
+                    )
+                    .bind(revision_id.as_str())
+                    .bind(component)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                for tag in &task.tags {
+                    sqlx::query(
+                        "INSERT INTO task_revision_tags (revision_id, tag) VALUES (?1, ?2)",
+                    )
+                    .bind(revision_id.as_str())
+                    .bind(tag)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                revision_id
+            }
+        };
+
+        sqlx::query("DELETE FROM task_components WHERE task_id = ?1")
+            .bind(task.task_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        for component in &task.components {
+            sqlx::query("INSERT INTO task_components (task_id, component) VALUES (?1, ?2)")
+                .bind(task.task_id.as_str())
+                .bind(component)
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        sqlx::query("DELETE FROM task_tags WHERE task_id = ?1")
+            .bind(task.task_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        for tag in &task.tags {
+            sqlx::query("INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)")
+                .bind(task.task_id.as_str())
+                .bind(tag)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("UPDATE tasks SET current_revision_id = ?2 WHERE task_id = ?1")
+            .bind(task.task_id.as_str())
+            .bind(revision_id.as_str())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(revision_id)
     }
 
     pub async fn upsert_agent_config(&self, config: &AgentConfig) -> StoreResult<String> {
@@ -219,13 +357,86 @@ impl Store {
         run: &AgentRun,
         experiment_id: Option<&ExperimentId>,
     ) -> StoreResult<()> {
+        self.save_run_inner(run, experiment_id, None).await
+    }
+
+    /// Inserts a new run bound to the exact immutable task revision supplied
+    /// by its caller. Later `save_run` updates preserve that binding.
+    pub async fn save_run_at_task_revision(
+        &self,
+        run: &AgentRun,
+        experiment_id: Option<&ExperimentId>,
+        task_revision_id: &TaskRevisionId,
+    ) -> StoreResult<()> {
+        self.save_run_inner(run, experiment_id, Some(task_revision_id))
+            .await
+    }
+
+    async fn save_run_inner(
+        &self,
+        run: &AgentRun,
+        experiment_id: Option<&ExperimentId>,
+        task_revision_id: Option<&TaskRevisionId>,
+    ) -> StoreResult<()> {
+        let resolved_revision = match task_revision_id {
+            Some(revision_id) => revision_id.clone(),
+            None => {
+                let raw: Option<String> = sqlx::query_scalar(
+                    "SELECT COALESCE(
+                        (SELECT task_revision_id FROM runs WHERE run_id = ?1),
+                        (SELECT current_revision_id FROM tasks WHERE task_id = ?2)
+                     )",
+                )
+                .bind(run.run_id.as_str())
+                .bind(run.task_id.as_str())
+                .fetch_one(&self.pool)
+                .await?;
+                TaskRevisionId::from_stored(raw.ok_or_else(|| {
+                    StoreError::NotFound(format!(
+                        "task revision for run `{}` and task `{}`",
+                        run.run_id, run.task_id
+                    ))
+                })?)?
+            }
+        };
+        let existing_revision: Option<String> =
+            sqlx::query_scalar("SELECT task_revision_id FROM runs WHERE run_id = ?1")
+                .bind(run.run_id.as_str())
+                .fetch_optional(&self.pool)
+                .await?
+                .flatten();
+        if existing_revision
+            .as_deref()
+            .is_some_and(|existing| existing != resolved_revision.as_str())
+        {
+            return Err(StoreError::TaskRevisionConflict {
+                run_id: run.run_id.to_string(),
+                existing: existing_revision.unwrap_or_default(),
+                attempted: resolved_revision.to_string(),
+            });
+        }
+        let revision_task: Option<String> =
+            sqlx::query_scalar("SELECT task_id FROM task_revisions WHERE revision_id = ?1")
+                .bind(resolved_revision.as_str())
+                .fetch_optional(&self.pool)
+                .await?;
+        if revision_task.as_deref() != Some(run.task_id.as_str()) {
+            return Err(StoreError::Corrupt(format!(
+                "task revision `{resolved_revision}` does not belong to task `{}`",
+                run.task_id
+            )));
+        }
         let fingerprint = self.upsert_agent_config(&run.agent).await?;
         sqlx::query(
             "INSERT INTO runs (
                  run_id, task_id, agent_id, config_fingerprint, experiment_id, base_commit, status,
                  created_at, started_at, finished_at, exit_code, failure_reason, workspace_path,
-                 input_tokens, output_tokens, cost_usd, record_json, agent_status, outcome, branch
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)
+                 input_tokens, output_tokens, cost_usd, record_json, agent_status, outcome, branch,
+                 task_revision_id
+             ) VALUES (
+                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                 ?17, ?18, ?19, ?20, ?21
+             )
              ON CONFLICT (run_id) DO UPDATE SET
                  status = excluded.status,
                  started_at = excluded.started_at,
@@ -266,6 +477,7 @@ impl Store {
         .bind(run.execution.as_ref().map(|e| e.status.as_str()))
         .bind(run.outcome.map(|o| o.as_str()))
         .bind(run.branch.as_deref())
+        .bind(resolved_revision.as_str())
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -747,6 +959,9 @@ mod tests {
                 language: Some("rust".into()),
                 ..Default::default()
             },
+            classification: Default::default(),
+            components: Vec::new(),
+            tags: Vec::new(),
         }
     }
 

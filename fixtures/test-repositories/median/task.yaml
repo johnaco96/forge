@@ -44,7 +44,12 @@ evaluation:
     - id: public_api
       command: "grep -Fq 'pub fn median(values: &mut [f64]) -> Option<f64>' src/lib.rs"
 
-metadata:
-  task_type: implementation
+classification:
+  category: implementation
   language: rust
-  subsystem: core
+  domain: algorithms
+  difficulty: medium
+components:
+  - median
+tags:
+  - controlled-smoke

@@ -385,6 +385,16 @@ fn compete_runs_claude_and_codex_independently_without_network() {
         assert!(invocation.contains("# Engineering task T-1042"));
         assert!(invocation.contains("You are not the judge of this work"));
     }
+
+    let experiments = fixture.forge(&["experiments", "list"]);
+    let experiments_text = stdout(&experiments);
+    assert!(experiments.status.success(), "{experiments_text}");
+    assert!(experiments_text.contains("E-0001"), "{experiments_text}");
+    assert!(
+        experiments_text.contains("claude,codex"),
+        "{experiments_text}"
+    );
+    assert!(experiments_text.contains("2"), "{experiments_text}");
 }
 
 #[test]
@@ -702,4 +712,332 @@ fn a_task_naming_another_repository_is_refused() {
         "{}",
         stderr(&output)
     );
+}
+
+#[test]
+fn experience_commands_query_real_stub_runs_and_export_jsonl_without_network() {
+    let fixture = Fixture::new();
+    let claude = fixture.stub("echo 2 > value.txt");
+    let codex = fixture.codex_stub("echo 3 > value.txt");
+    fixture.use_stub(&claude);
+    fixture.use_codex_stub(&codex);
+
+    let first = fixture.write_task(
+        "auth-one.yaml",
+        "task_id: T-1042\n\
+         repository: distributed-runtime\n\
+         objective: Repair authentication token parsing\n\
+         classification:\n\
+         \x20 category: bugfix\n\
+         \x20 language: rust\n\
+         \x20 domain: auth\n\
+         \x20 difficulty: medium\n\
+         components:\n\
+         \x20 - api\n\
+         \x20 - auth\n\
+         tags:\n\
+         \x20 - regression\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+    let second = fixture.write_task(
+        "auth-two.yaml",
+        "task_id: T-1043\n\
+         repository: distributed-runtime\n\
+         objective: Fix authentication token validation\n\
+         classification:\n\
+         \x20 category: bugfix\n\
+         \x20 language: rust\n\
+         \x20 domain: auth\n\
+         \x20 difficulty: medium\n\
+         components:\n\
+         \x20 - api\n\
+         \x20 - auth\n\
+         tags:\n\
+         \x20 - regression\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+
+    let passed = fixture.forge(&["run", &first, "--agent", "claude"]);
+    assert!(passed.status.success(), "{}", stderr(&passed));
+    let failed = fixture.forge(&["run", &second, "--agent", "codex"]);
+    assert_eq!(failed.status.code(), Some(2), "{}", stdout(&failed));
+
+    // Complete the same-task agent pairs for the debugging cohort.
+    assert_eq!(
+        fixture
+            .forge(&["run", &first, "--agent", "codex"])
+            .status
+            .code(),
+        Some(2)
+    );
+    assert!(
+        fixture
+            .forge(&["run", &second, "--agent", "claude"])
+            .status
+            .success()
+    );
+
+    let feature = fixture.write_task(
+        "feature.yaml",
+        "task_id: T-1044\n\
+         repository: distributed-runtime\n\
+         objective: Add support for a larger recorded value\n\
+         classification:\n\
+         \x20 category: feature\n\
+         \x20 language: rust\n\
+         \x20 domain: storage\n\
+         \x20 difficulty: easy\n\
+         components:\n\
+         \x20 - storage\n\
+         tags:\n\
+         \x20 - controlled-smoke\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -Eq '^[23]$' value.txt\n",
+    );
+    for agent in ["claude", "codex"] {
+        let output = fixture.forge(&["run", &feature, "--agent", agent]);
+        assert!(output.status.success(), "{agent}: {}", stdout(&output));
+    }
+
+    let performance = fixture.write_task(
+        "performance.yaml",
+        "task_id: T-1045\n\
+         repository: distributed-runtime\n\
+         objective: Measure throughput for the larger recorded value\n\
+         classification:\n\
+         \x20 category: performance\n\
+         \x20 language: rust\n\
+         \x20 domain: storage\n\
+         \x20 difficulty: hard\n\
+         components:\n\
+         \x20 - benchmark\n\
+         \x20 - storage\n\
+         tags:\n\
+         \x20 - controlled-smoke\n\
+         evaluation:\n\
+         \x20 benchmark:\n\
+         \x20   command: >-\n\
+         \x20     if grep -q '^3$' value.txt; then\n\
+         \x20     printf '{\"metrics\":{\"throughput\":{\"value\":3,\"unit\":\"items/s\",\"direction\":\"maximize\"}}}' > .forge-performance.json; fi\n\
+         \x20   metrics_file: .forge-performance.json\n",
+    );
+    let inconclusive = fixture.forge(&["run", &performance, "--agent", "claude"]);
+    assert_eq!(
+        inconclusive.status.code(),
+        Some(2),
+        "{}",
+        stdout(&inconclusive)
+    );
+    assert!(stdout(&inconclusive).contains("INCONCLUSIVE"));
+    let benchmark_pass = fixture.forge(&["run", &performance, "--agent", "codex"]);
+    assert!(
+        benchmark_pass.status.success(),
+        "{}",
+        stdout(&benchmark_pass)
+    );
+
+    let history = fixture.forge(&[
+        "history",
+        "--agent",
+        "codex",
+        "--outcome",
+        "fail",
+        "--task",
+        "T-1043",
+        "--repository",
+        "distributed-runtime",
+        "--category",
+        "bugfix",
+        "--component",
+        "auth",
+        "--limit",
+        "1",
+    ]);
+    let history_text = stdout(&history);
+    assert!(history.status.success(), "{}", stderr(&history));
+    assert!(history_text.contains("R-0002"), "{history_text}");
+    assert!(history_text.contains("FAIL"), "{history_text}");
+    assert!(!history_text.contains("R-0001"), "{history_text}");
+
+    let stats = fixture.forge(&["agent", "stats", "codex"]);
+    let stats_text = stdout(&stats);
+    assert!(stats.status.success(), "{}", stderr(&stats));
+    assert!(stats_text.contains("Total runs"), "{stats_text}");
+    assert!(stats_text.contains("240 tokens median"), "{stats_text}");
+    assert!(stats_text.contains("Provider cost"), "{stats_text}");
+    assert!(
+        stats_text.contains("unavailable (0 of 4 runs reported)"),
+        "{stats_text}"
+    );
+    assert!(stats_text.contains("Category breakdown"), "{stats_text}");
+    assert!(stats_text.contains("Component breakdown"), "{stats_text}");
+
+    let failures = fixture.forge(&[
+        "failures",
+        "--agent",
+        "codex",
+        "--category",
+        "bugfix",
+        "--component",
+        "auth",
+    ]);
+    let failures_text = stdout(&failures);
+    assert!(failures.status.success(), "{}", stderr(&failures));
+    assert!(failures_text.contains("R-0002  FAIL"), "{failures_text}");
+    assert!(
+        failures_text.contains("Failed evaluators"),
+        "{failures_text}"
+    );
+    assert!(failures_text.contains("tests"), "{failures_text}");
+
+    let similar = fixture.forge(&["task", "similar", "T-1042"]);
+    let similar_text = stdout(&similar);
+    assert!(similar.status.success(), "{}", stderr(&similar));
+    assert!(similar_text.contains("T-1043"), "{similar_text}");
+    assert!(similar_text.contains("Matched:"), "{similar_text}");
+    assert!(similar_text.contains("codex"), "{similar_text}");
+    assert!(
+        !similar_text.to_lowercase().contains("recommend"),
+        "{similar_text}"
+    );
+
+    let export = fixture.forge(&["export", "--format", "jsonl"]);
+    assert!(export.status.success(), "{}", stderr(&export));
+    let records = stdout(&export)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 8);
+    assert!(records.iter().all(|record| record["schema_version"] == 1));
+    assert_eq!(records[1]["task"]["classification"]["category"], "bugfix");
+    assert_eq!(records[1]["known_cost_usd"], serde_json::Value::Null);
+    assert!(records[1]["artifact_paths"].is_array());
+}
+
+#[test]
+fn edited_task_ids_do_not_rewrite_historical_cli_evidence() {
+    let fixture = Fixture::new();
+    let claude = fixture.stub("echo 2 > value.txt");
+    fixture.use_stub(&claude);
+
+    let task_path = fixture.write_task(
+        "changing.yaml",
+        "task_id: T-1042\n\
+         repository: distributed-runtime\n\
+         objective: Debug scheduler contention\n\
+         classification:\n\
+         \x20 category: debugging\n\
+         \x20 language: rust\n\
+         \x20 domain: concurrency\n\
+         \x20 difficulty: medium\n\
+         components:\n\
+         \x20 - scheduler\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+    assert!(
+        fixture
+            .forge(&["run", &task_path, "--agent", "claude"])
+            .status
+            .success()
+    );
+
+    fixture.write_task(
+        "changing.yaml",
+        "task_id: T-1042\n\
+         repository: distributed-runtime\n\
+         objective: Improve storage throughput\n\
+         classification:\n\
+         \x20 category: performance\n\
+         \x20 language: rust\n\
+         \x20 domain: storage\n\
+         \x20 difficulty: hard\n\
+         components:\n\
+         \x20 - storage\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+    assert!(
+        fixture
+            .forge(&["run", &task_path, "--agent", "claude"])
+            .status
+            .success()
+    );
+
+    let target = fixture.write_task(
+        "target.yaml",
+        "task_id: T-2000\n\
+         repository: distributed-runtime\n\
+         objective: Investigate scheduler contention\n\
+         classification:\n\
+         \x20 category: debugging\n\
+         \x20 language: rust\n\
+         \x20 domain: concurrency\n\
+         \x20 difficulty: medium\n\
+         components:\n\
+         \x20 - scheduler\n\
+         evaluation:\n\
+         \x20 tests:\n\
+         \x20   command: grep -q '^2$' value.txt\n",
+    );
+    assert!(
+        fixture
+            .forge(&["run", &target, "--agent", "claude"])
+            .status
+            .success()
+    );
+
+    let history = fixture.forge(&["history", "--task", "T-1042"]);
+    let history_text = stdout(&history);
+    assert!(history.status.success(), "{}", stderr(&history));
+    assert!(history_text.contains("debugging"), "{history_text}");
+    assert!(history_text.contains("performance"), "{history_text}");
+    assert!(history_text.contains("R-0001"), "{history_text}");
+    assert!(history_text.contains("R-0002"), "{history_text}");
+
+    let stats = fixture.forge(&["agent", "stats", "claude"]);
+    let stats_text = stdout(&stats);
+    assert!(stats.status.success(), "{}", stderr(&stats));
+    assert!(stats_text.contains("debugging"), "{stats_text}");
+    assert!(stats_text.contains("performance"), "{stats_text}");
+
+    let similar = fixture.forge(&["task", "similar", "T-2000"]);
+    let similar_text = stdout(&similar);
+    assert!(similar.status.success(), "{}", stderr(&similar));
+    let closest = &similar_text[similar_text.find("T-1042").unwrap()..];
+    assert!(closest.contains("Category: debugging"), "{similar_text}");
+    assert!(closest.contains("Domain: concurrency"), "{similar_text}");
+
+    let export = fixture.forge(&["export", "--format", "jsonl"]);
+    assert!(export.status.success(), "{}", stderr(&export));
+    let revisions = stdout(&export)
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|record| record["task"]["task_id"] == "T-1042")
+        .collect::<Vec<_>>();
+    assert_eq!(revisions.len(), 2);
+    assert_ne!(
+        revisions[0]["task_revision_id"],
+        revisions[1]["task_revision_id"]
+    );
+    assert_eq!(
+        revisions[0]["task"]["classification"]["category"],
+        "debugging"
+    );
+    assert_eq!(
+        revisions[0]["task"]["classification"]["domain"],
+        "concurrency"
+    );
+    assert_eq!(
+        revisions[1]["task"]["classification"]["category"],
+        "performance"
+    );
+    assert_eq!(revisions[1]["task"]["classification"]["domain"], "storage");
 }

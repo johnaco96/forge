@@ -142,6 +142,9 @@ mod tests {
             },
             protection: ProtectionPolicy::default(),
             metadata: TaskMetadata::default(),
+            classification: Default::default(),
+            components: Vec::new(),
+            tags: Vec::new(),
         }
     }
 

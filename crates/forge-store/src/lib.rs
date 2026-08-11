@@ -9,7 +9,13 @@
 #![deny(rust_2018_idioms)]
 
 pub mod error;
+pub mod experience;
 pub mod sqlite;
 
 pub use error::{StoreError, StoreResult};
-pub use sqlite::{RunSummary, Store};
+pub use experience::{
+    AgentStatistics, AgentTaskOutcomes, CohortStatistics, EXPORT_SCHEMA_VERSION,
+    ExperimentHistoryEntry, ExperimentRunHistory, ExportRecord, FailedEvaluatorSummary,
+    FailureFilter, FailureSummary, HistoryFilter, RunHistoryEntry, TaskExperience, TaskSimilarity,
+};
+pub use sqlite::{RunSummary, Store, TaskRevisionId};

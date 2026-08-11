@@ -398,12 +398,11 @@ impl EvaluationSpec {
     }
 }
 
-/// Task attributes used later for routing and cohort analysis.
+/// Legacy Phase 0-2 task attributes.
 ///
-/// These are the features the design document names as routing inputs
-/// (language, subsystem, task category); they are free-form strings for now
-/// because a controlled vocabulary should be derived from real tasks rather
-/// than guessed at.
+/// New tasks should prefer [`TaskClassification`]. These fields remain part of
+/// the format and supply backwards-compatible category/language/domain values
+/// for historical analysis.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskMetadata {
@@ -415,6 +414,31 @@ pub struct TaskMetadata {
     pub subsystem: Option<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub labels: BTreeMap<String, String>,
+}
+
+/// Small, explicit task classification used for historical cohorts and
+/// deterministic retrieval. Values remain repository-defined strings rather
+/// than a universal taxonomy.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskClassification {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub difficulty: Option<String>,
+}
+
+impl TaskClassification {
+    pub fn is_empty(&self) -> bool {
+        self.category.is_none()
+            && self.language.is_none()
+            && self.domain.is_none()
+            && self.difficulty.is_none()
+    }
 }
 
 /// A structured engineering task assigned to an agent.
@@ -439,6 +463,14 @@ pub struct EngineeringTask {
     pub protection: ProtectionPolicy,
     #[serde(default)]
     pub metadata: TaskMetadata,
+    /// Structured historical-analysis inputs. Optional for compatibility with
+    /// Phase 0-2 task definitions.
+    #[serde(default, skip_serializing_if = "TaskClassification::is_empty")]
+    pub classification: TaskClassification,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl EngineeringTask {
@@ -481,6 +513,20 @@ impl EngineeringTask {
         if self.constraints.iter().any(|c| c.trim().is_empty()) {
             return Err(invalid("constraints must not contain empty entries"));
         }
+        for (name, value) in [
+            ("category", self.classification.category.as_deref()),
+            ("language", self.classification.language.as_deref()),
+            ("domain", self.classification.domain.as_deref()),
+            ("difficulty", self.classification.difficulty.as_deref()),
+        ] {
+            if let Some(value) = value {
+                validate_classification_value(value)
+                    .map_err(|reason| invalid(&format!("classification `{name}` {reason}")))?;
+            }
+        }
+        validate_classification_list("components", &self.components)
+            .map_err(|reason| invalid(&reason))?;
+        validate_classification_list("tags", &self.tags).map_err(|reason| invalid(&reason))?;
         for (kind, spec) in self.evaluation.checks() {
             if spec.command.trim().is_empty() {
                 return Err(invalid(&format!(
@@ -553,6 +599,29 @@ impl EngineeringTask {
         Ok(())
     }
 
+    /// Classification with the Phase 0-2 metadata spellings used as fallbacks
+    /// so historical tasks immediately participate in queries.
+    pub fn effective_classification(&self) -> TaskClassification {
+        TaskClassification {
+            category: self
+                .classification
+                .category
+                .clone()
+                .or_else(|| self.metadata.task_type.clone()),
+            language: self
+                .classification
+                .language
+                .clone()
+                .or_else(|| self.metadata.language.clone()),
+            domain: self
+                .classification
+                .domain
+                .clone()
+                .or_else(|| self.metadata.subsystem.clone()),
+            difficulty: self.classification.difficulty.clone(),
+        }
+    }
+
     /// Non-fatal observations worth surfacing to the author of a task file.
     pub fn warnings(&self) -> Vec<String> {
         let mut warnings = Vec::new();
@@ -616,6 +685,31 @@ fn validate_repository_relative(path: &str) -> Result<(), String> {
         )
     }) {
         return Err("must not escape the repository root".to_string());
+    }
+    Ok(())
+}
+
+fn validate_classification_value(value: &str) -> Result<(), &'static str> {
+    if value.trim().is_empty() {
+        return Err("must not be empty");
+    }
+    if value.chars().count() > 64 {
+        return Err("must be at most 64 characters");
+    }
+    if value.chars().any(char::is_control) {
+        return Err("must not contain control characters");
+    }
+    Ok(())
+}
+
+fn validate_classification_list(name: &str, values: &[String]) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        validate_classification_value(value)
+            .map_err(|reason| format!("{name} entry `{value}` {reason}"))?;
+        if !seen.insert(value) {
+            return Err(format!("{name} entry `{value}` is duplicated"));
+        }
     }
     Ok(())
 }
@@ -762,6 +856,9 @@ evaluatoin:
             evaluation: EvaluationSpec::default(),
             protection: ProtectionPolicy::default(),
             metadata: TaskMetadata::default(),
+            classification: TaskClassification::default(),
+            components: Vec::new(),
+            tags: Vec::new(),
         };
         assert!(task.validate().is_err());
     }
@@ -776,6 +873,9 @@ evaluatoin:
             evaluation: EvaluationSpec::default(),
             protection: ProtectionPolicy::default(),
             metadata: TaskMetadata::default(),
+            classification: TaskClassification::default(),
+            components: Vec::new(),
+            tags: Vec::new(),
         };
         task.validate().unwrap();
         assert!(
@@ -805,6 +905,92 @@ metadata:
         let round_tripped: EngineeringTask =
             serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&task).unwrap()).unwrap();
         assert_eq!(task, round_tripped);
+    }
+
+    #[test]
+    fn structured_classification_components_and_tags_parse_and_round_trip() {
+        let raw = r#"
+task_id: T-0013
+repository: forge
+objective: Make run history queryable by task shape
+classification:
+  category: feature
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+  - forge-cli
+tags:
+  - ledger
+  - offline-analysis
+"#;
+        let task: EngineeringTask = serde_yaml_ng::from_str(raw).unwrap();
+        task.validate().unwrap();
+        assert_eq!(task.classification.category.as_deref(), Some("feature"));
+        assert_eq!(task.components, vec!["forge-store", "forge-cli"]);
+        assert_eq!(task.tags, vec!["ledger", "offline-analysis"]);
+
+        let round_trip: EngineeringTask =
+            serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&task).unwrap()).unwrap();
+        assert_eq!(round_trip, task);
+    }
+
+    #[test]
+    fn legacy_metadata_supplies_effective_classification_without_rewriting_tasks() {
+        let raw = r#"
+task_id: T-0014
+repository: forge
+objective: Continue accepting Phase 0 task definitions
+metadata:
+  task_type: bugfix
+  language: rust
+  subsystem: runner
+"#;
+        let task: EngineeringTask = serde_yaml_ng::from_str(raw).unwrap();
+        assert!(task.classification.is_empty());
+        assert_eq!(
+            task.effective_classification(),
+            TaskClassification {
+                category: Some("bugfix".into()),
+                language: Some("rust".into()),
+                domain: Some("runner".into()),
+                difficulty: None,
+            }
+        );
+    }
+
+    #[test]
+    fn classification_values_are_small_nonempty_and_unique() {
+        let base = r#"
+task_id: T-0015
+repository: forge
+objective: Validate classification
+classification:
+  category: feature
+components:
+  - store
+tags:
+  - ledger
+"#;
+        let valid: EngineeringTask = serde_yaml_ng::from_str(base).unwrap();
+        valid.validate().unwrap();
+
+        for (needle, raw) in [
+            ("must not be empty", base.replace("feature", "'   '")),
+            (
+                "must be at most 64",
+                base.replace("feature", &"x".repeat(65)),
+            ),
+            (
+                "is duplicated",
+                base.replace("  - store\n", "  - store\n  - store\n"),
+            ),
+        ] {
+            let task: EngineeringTask = serde_yaml_ng::from_str(&raw).unwrap();
+            let error = task.validate().unwrap_err().to_string();
+            assert!(error.contains(needle), "{error}");
+        }
     }
 
     #[test]

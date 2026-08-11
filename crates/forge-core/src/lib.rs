@@ -57,7 +57,7 @@ pub use run::{
 };
 pub use security::{AgentSecurity, HostContainment, SecurityPosture, WorkspaceIsolation};
 pub use task::{
-    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskError,
-    TaskMetadata,
+    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskClassification,
+    TaskError, TaskMetadata,
 };
 pub use workspace::{Workspace, WorkspaceKind};

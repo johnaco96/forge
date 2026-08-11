@@ -428,8 +428,10 @@ impl Runner {
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());
 
-        self.store.upsert_task(&request.task).await?;
-        self.store.save_run(&run, experiment_id).await?;
+        let task_revision_id = self.store.upsert_task(&request.task).await?;
+        self.store
+            .save_run_at_task_revision(&run, experiment_id, &task_revision_id)
+            .await?;
 
         if let Some(experiment_sink) = experiment_sink {
             experiment_sink.emit(ExperimentEventPayload::ParticipantRunStarted {

@@ -6,7 +6,11 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use chrono::{DateTime, Utc};
+use clap::{Parser, Subcommand, ValueEnum};
+use forge_core::ids::{ExperimentId, TaskId};
+use forge_core::run::RunOutcome;
+use forge_store::{FailureFilter, HistoryFilter};
 
 mod commands;
 mod output;
@@ -98,12 +102,76 @@ enum Command {
         #[command(subcommand)]
         command: TaskCommand,
     },
+
+    /// List historical runs from the experience ledger.
+    History {
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long, value_parser = parse_outcome)]
+        outcome: Option<RunOutcome>,
+        #[arg(long)]
+        task: Option<TaskId>,
+        #[arg(long)]
+        repository: Option<String>,
+        #[arg(long)]
+        experiment: Option<ExperimentId>,
+        #[arg(long, value_parser = parse_datetime, value_name = "RFC3339")]
+        from: Option<DateTime<Utc>>,
+        #[arg(long, value_parser = parse_datetime, value_name = "RFC3339")]
+        through: Option<DateTime<Utc>>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        language: Option<String>,
+        #[arg(long)]
+        domain: Option<String>,
+        #[arg(long)]
+        difficulty: Option<String>,
+        #[arg(long)]
+        component: Option<String>,
+        #[arg(long)]
+        tag: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+
+    /// Investigate historical non-passing runs.
+    Failures {
+        #[arg(long)]
+        agent: Option<String>,
+        #[arg(long)]
+        repository: Option<String>,
+        #[arg(long)]
+        category: Option<String>,
+        #[arg(long)]
+        component: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+
+    /// Export normalized run evidence for offline analysis.
+    Export {
+        #[arg(long, value_enum)]
+        format: ExportFormat,
+    },
+
+    /// Inspect recorded competitive experiments.
+    Experiments {
+        #[command(subcommand)]
+        command: ExperimentsCommand,
+    },
 }
 
 #[derive(Subcommand)]
 enum AgentCommand {
     /// List known agents and whether Forge can run them.
     List,
+
+    /// Summarize historical outcomes and reported measurements for an agent.
+    Stats {
+        /// Agent identifier, for example `codex`.
+        agent: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -113,6 +181,27 @@ enum TaskCommand {
         /// Path to a task file (`.yaml`, `.yml`, or `.json`).
         path: PathBuf,
     },
+
+    /// Find prior tasks using deterministic structured similarity.
+    Similar {
+        task: TaskId,
+        #[arg(long, default_value_t = 10)]
+        limit: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum ExperimentsCommand {
+    /// List historical experiments and their linked runs.
+    List {
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ExportFormat {
+    Jsonl,
 }
 
 #[tokio::main]
@@ -199,14 +288,109 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 commands::agent::list()?;
                 Ok(std::process::ExitCode::SUCCESS)
             }
+            AgentCommand::Stats { agent } => {
+                commands::experience::agent_stats(cli.repo, agent).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
         },
         Command::Task { command } => match command {
             TaskCommand::Validate { path } => {
                 commands::task::validate(path)?;
                 Ok(std::process::ExitCode::SUCCESS)
             }
+            TaskCommand::Similar { task, limit } => {
+                commands::experience::similar(cli.repo, task, limit).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+        },
+        Command::History {
+            agent,
+            outcome,
+            task,
+            repository,
+            experiment,
+            from,
+            through,
+            category,
+            language,
+            domain,
+            difficulty,
+            component,
+            tag,
+            limit,
+        } => {
+            commands::experience::history(
+                cli.repo,
+                HistoryFilter {
+                    agent_id: agent,
+                    outcome,
+                    task_id: task,
+                    repository,
+                    experiment_id: experiment,
+                    created_from: from,
+                    created_through: through,
+                    category,
+                    language,
+                    domain,
+                    difficulty,
+                    component,
+                    tag,
+                    limit,
+                },
+            )
+            .await?;
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        Command::Failures {
+            agent,
+            repository,
+            category,
+            component,
+            limit,
+        } => {
+            commands::experience::failures(
+                cli.repo,
+                FailureFilter {
+                    agent_id: agent,
+                    repository,
+                    category,
+                    component,
+                    limit,
+                },
+            )
+            .await?;
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        Command::Export { format } => {
+            match format {
+                ExportFormat::Jsonl => commands::experience::export_jsonl(cli.repo).await?,
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+        Command::Experiments { command } => match command {
+            ExperimentsCommand::List { limit } => {
+                commands::experience::experiments(cli.repo, limit).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
         },
     }
+}
+
+fn parse_outcome(raw: &str) -> Result<RunOutcome, String> {
+    match raw.to_ascii_lowercase().replace('-', "_").as_str() {
+        "pass" | "passed" => Ok(RunOutcome::Passed),
+        "fail" | "failed" => Ok(RunOutcome::Failed),
+        "inconclusive" => Ok(RunOutcome::Inconclusive),
+        "no_change" => Ok(RunOutcome::NoChange),
+        "error" | "errored" => Ok(RunOutcome::Errored),
+        _ => Err("expected pass, fail, inconclusive, no-change, or error".into()),
+    }
+}
+
+fn parse_datetime(raw: &str) -> Result<DateTime<Utc>, String> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|error| format!("expected an RFC3339 timestamp: {error}"))
 }
 
 fn init_tracing(verbose: bool) {
@@ -242,6 +426,12 @@ mod tests {
             vec!["forge", "task", "validate", "task.yaml"],
             vec!["forge", "run", "task.yaml", "--agent", "claude"],
             vec!["forge", "compete", "task.yaml", "--agents", "claude,codex"],
+            vec!["forge", "history", "--agent", "codex", "--limit", "10"],
+            vec!["forge", "agent", "stats", "codex"],
+            vec!["forge", "failures", "--component", "runner"],
+            vec!["forge", "task", "similar", "T-1042"],
+            vec!["forge", "experiments", "list"],
+            vec!["forge", "export", "--format", "jsonl"],
             vec!["forge", "--repo", "/tmp/repo", "agent", "list"],
         ] {
             Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));

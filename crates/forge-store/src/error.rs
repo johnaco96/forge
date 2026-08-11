@@ -16,6 +16,18 @@ pub enum StoreError {
     #[error("ledger contains an unreadable value: {0}")]
     Corrupt(String),
 
+    #[error("{0} was not found in the experience ledger")]
+    NotFound(String),
+
+    #[error(
+        "run `{run_id}` is already bound to task revision `{existing}` and cannot be rebound to `{attempted}`"
+    )]
+    TaskRevisionConflict {
+        run_id: String,
+        existing: String,
+        attempted: String,
+    },
+
     #[error("{context}")]
     Io {
         context: String,

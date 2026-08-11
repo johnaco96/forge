@@ -68,11 +68,17 @@ protected_paths:
   - tests/**
   - benches/**
 
-# Used later to compare agent performance across kinds of work.
-metadata:
-  task_type: refactor
+# Optional, repository-defined historical-analysis fields. Forge does not ask
+# an agent or model to infer these values.
+classification:
+  category: refactor
   language: rust
-  subsystem: core
+  domain: core
+  difficulty: medium
+components:
+  - forge-core
+tags:
+  - maintainability
 "#;
 
 pub struct InitArgs {

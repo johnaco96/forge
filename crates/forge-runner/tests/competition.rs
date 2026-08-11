@@ -79,6 +79,9 @@ fn task() -> EngineeringTask {
         },
         protection: ProtectionPolicy::new(vec!["tests/**".into()], Vec::new()),
         metadata: TaskMetadata::default(),
+        classification: Default::default(),
+        components: Vec::new(),
+        tags: Vec::new(),
     }
 }
 

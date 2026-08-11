@@ -30,7 +30,7 @@ base commit into a comparative experiment.
 | Git worktree isolation with safety invariants | ✅ |
 | Subprocess execution: timeouts, output caps, process-group cleanup | ✅ |
 | Environment policy and secret redaction | ✅ |
-| Typed test, benchmark, lint, security, complexity, and custom evaluation | ✅ Phase 2 review candidate |
+| Typed test, benchmark, lint, security, complexity, and custom evaluation | ✅ |
 | SQLite experience ledger (runs, trajectories, evaluator results, metrics) | ✅ |
 | `forge init`, `forge agent list`, `forge task validate` | ✅ |
 | **Claude Code adapter and `forge run`** | ✅ |
@@ -38,7 +38,8 @@ base commit into a comparative experiment.
 | Structured benchmark metric contract | ✅ |
 | **Codex adapter and `forge run --agent codex`** | ✅ |
 | **`forge compete task.yaml --agents claude,codex`** | ✅ |
-| History queries, learned routing, multi-agent | ⬜ later |
+| **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ Phase 3 review candidate |
+| Learned routing, recommendations, teamwork | ⬜ later |
 
 ---
 
@@ -71,6 +72,20 @@ forge run .forge/tasks/my-task.yaml --agent codex
 
 `forge agent list` shows which agents Forge can actually run, and
 `forge task validate <file>` checks a task before you spend a run on it.
+
+The retained evidence is queryable without writing SQL:
+
+```bash
+forge history --agent codex --outcome pass --limit 20
+forge agent stats codex
+forge failures --component storage --agent codex
+forge task similar T-1042
+forge experiments list
+forge export --format jsonl > forge-runs.jsonl
+```
+
+These Phase 3 commands describe recorded evidence. They do not select an agent,
+recommend one, or apply a learned routing policy.
 
 To run independent attempts from one resolved base and compare their evidence
 without choosing an overall winner:
@@ -130,17 +145,36 @@ protected_paths:
 allowed_protected_paths:
   - tests/checkpoint_format.rs
 
-metadata:
-  task_type: performance
+classification:
+  category: performance
   language: rust
-  subsystem: storage
+  domain: storage
+  difficulty: hard
+components:
+  - checkpointing
+  - storage
+tags:
+  - throughput
 ```
 
 `repository` must match the `name` in `.forge/config.toml`, so a task cannot be
 run against the wrong repository by accident.
 
+Classification, components, and tags are optional repository-defined strings
+used for cohorts and deterministic similarity. Forge never asks an LLM to infer
+them. Existing `metadata.task_type`, `metadata.language`, and
+`metadata.subsystem` fields remain compatible as category, language, and domain
+fallbacks.
+
+Each run is bound to an immutable content-addressed snapshot of the complete
+task definition. Reusing a task ID with edited instructions or classification
+affects future runs only; historical queries and exports retain the revision
+that each older run actually executed.
+
 See [`docs/evaluation.md`](docs/evaluation.md) for every evaluator category,
 required versus optional policy, structured metric output, and trust rules.
+See [`docs/experience-ledger.md`](docs/experience-ledger.md) for query semantics,
+similarity weights, missing-data rules, and the JSONL schema.
 
 ---
 
@@ -256,7 +290,15 @@ not, so the change is always recoverable:
 git diff main..forge/R-0001
 ```
 
-The ledger is plain SQLite — query it directly:
+The ledger is plain SQLite. Prefer the typed CLI query surface for stable
+automation:
+
+```bash
+forge history --repository distributed-runtime
+forge export --format jsonl
+```
+
+Direct inspection remains possible:
 
 ```bash
 sqlite3 .forge/forge.db "SELECT run_id, status, agent_status, outcome, cost_usd FROM runs"
