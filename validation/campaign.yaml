@@ -8,39 +8,35 @@
 campaign_id: forge-v1-2026-08
 campaign_version: 2
 registered: 2026-08-12
-status: awaiting-baseline-freeze
+status: frozen-awaiting-agents
 
 repository: forge
 
-# NOT YET FROZEN. Fill both fields only after the validation-hardening release is
-# reviewed and tagged, then never change them for this campaign.
+# FROZEN FORMAL CAMPAIGN BASELINE.
 #
-# The campaign deliberately does NOT run from v1.0.0 / c566354. That baseline
-# contains the campaign-blocking patch-capture defect (F-003): an agent that
-# compiles the project cannot have its patch captured at all, so every task would
-# have recorded an infrastructure error instead of a result. Two of the three
-# dogfood runs failed exactly that way.
-baseline_commit: null
-baseline_tag: null
+# Every Tier 1 participant must start from this exact source commit.
+# These fields must not change once formal campaign execution begins.
+#
+# v1.0.0 / c566354 was rejected because dogfooding exposed the
+# campaign-blocking F-003 patch-capture defect. The formal campaign
+# therefore begins from the validation-hardened v1.0.1 release.
+baseline_commit: "781b32fab791d1d4f839bfb1e5988f4e56150048"
+baseline_tag: "v1.0.1"
 baseline_intended: v1.0.1
-baseline_frozen: false
+baseline_frozen: true
 
-# Every Tier 1 run starts from the frozen baseline. Both agents must use the same
-# one, or the pair is not a pair.
-base_rev: null
+base_rev: "v1.0.1"
 
 agents:
   - id: claude
     role: primary
-    available: true
+    required: true
     adapter: claude-code
+
   - id: codex
     role: primary
-    available: false
+    required: true
     adapter: codex-cli
-    # Adapter stays configured while the binary is absent. Absence is a fact
-    # about this machine, not a reason to remove the agent from the campaign.
-    blocked_reason: "codex binary not on PATH as of the baseline"
 
 # How participants are physically separated during a formal run.
 #
@@ -72,6 +68,27 @@ isolation:
     Forge's own worktrees still share an object store. This strategy protects
     the formal experiment; it does not claim worktrees are hardened against a
     hostile participant.
+
+# What must be identical between the two participants, and what must not be.
+#
+# The two participants must receive identical experimental inputs but must not
+# share the physical Git repository/object namespace. Identical inputs are what
+# make the comparison a comparison; separate object stores are what stop one
+# participant from reading the other's answer.
+#
+# Manifest metadata. The invariants are enforced by campaign-clone.sh (which
+# fails closed on the "different" side) and by pinning --base plus the task
+# definition travelling with the baseline (the "same" side).
+pairing:
+  require_same:
+    - campaign_id
+    - task_revision_id
+    - baseline_commit
+    - evaluator_configuration
+    - protected_path_configuration
+  require_different:
+    - participant_repository
+    - git_object_store
 
 execution_modes:
   - id: paired-independent-clone
@@ -150,7 +167,9 @@ analysis:
 
 health_checkpoints:
   - id: baseline
-    at: null            # the frozen campaign baseline, once tagged
+    # `at` is the commit the checkpoint is for; `built` records whether a Phase 7
+    # snapshot actually exists for it yet. They are separate facts.
+    at: "781b32fab791d1d4f839bfb1e5988f4e56150048"
     built: false
   - id: dogfood-5
     after: ~5 accepted dogfood changes
@@ -207,7 +226,10 @@ provenance:
     during dogfooding (T-VAL-005, T-VAL-007, T-VAL-011) were retired and replaced
     by T-VAL-021, T-VAL-022, T-VAL-023 so no formal task carries prior exposure.
     Category distribution is unchanged.
+  # The state the corpus was designed against.
   authored_against: c566354a0ef023b55f91553c397c5d7f19dd22b1
+  # The state every task premise was re-audited against, and the campaign frozen.
+  frozen_against: 781b32fab791d1d4f839bfb1e5988f4e56150048
   isolation_amendment: >-
     2026-08-12. Formal participants moved from sibling Git worktrees to
     independent clones (independent-clone-v1) after cross-participant object and
@@ -224,9 +246,12 @@ provenance:
       reason: attempted and passed by Claude as run R-0003 during dogfooding
       replaced_by: T-VAL-023
   task_selection_method: >-
-    Direct inspection of the Forge codebase at the baseline commit. Every task
-    describes a condition observed in the source, not a hypothetical. Tasks
-    state the desired outcome and never the intended patch.
+    Tasks were selected by direct inspection of the Forge codebase at
+    c566354a0ef023b55f91553c397c5d7f19dd22b1 and then source-level re-audited
+    against the frozen campaign baseline
+    781b32fab791d1d4f839bfb1e5988f4e56150048. Every formal task describes a
+    condition observed in the source, not a hypothetical. Tasks state the
+    desired outcome and never the intended patch.
   known_bias: >-
     The corpus is what one reviewer noticed while reading the code. It is real
     work, but it is not a random sample of engineering work, and results do not
