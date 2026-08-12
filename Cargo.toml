@@ -15,6 +15,7 @@ license = "MIT OR Apache-2.0"
 forge-core = { path = "crates/forge-core" }
 forge-agent = { path = "crates/forge-agent" }
 forge-git = { path = "crates/forge-git" }
+forge-health = { path = "crates/forge-health" }
 forge-executor = { path = "crates/forge-executor" }
 forge-eval = { path = "crates/forge-eval" }
 forge-runner = { path = "crates/forge-runner" }

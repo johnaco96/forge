@@ -445,6 +445,7 @@ dependencies = [
  "forge-eval",
  "forge-executor",
  "forge-git",
+ "forge-health",
  "forge-router",
  "forge-runner",
  "forge-store",
@@ -507,6 +508,22 @@ dependencies = [
  "forge-core",
  "tempfile",
  "thiserror",
+ "tracing",
+]
+
+[[package]]
+name = "forge-health"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "forge-core",
+ "forge-git",
+ "forge-store",
+ "forge-world",
+ "sha2",
+ "tempfile",
+ "thiserror",
+ "tokio",
  "tracing",
 ]
 

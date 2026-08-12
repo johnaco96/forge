@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod compete;
 pub mod experience;
+pub mod health;
 pub mod init;
 pub mod run;
 pub mod task;

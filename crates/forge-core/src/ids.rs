@@ -165,6 +165,11 @@ define_id!(
     "WF"
 );
 define_id!(
+    /// Identifies one immutable repository-health snapshot, e.g. `H-0012`.
+    HealthSnapshotId,
+    "H"
+);
+define_id!(
     /// Identifies an agent as Forge knows it, e.g. `claude` or `codex`.
     AgentId,
     "A"

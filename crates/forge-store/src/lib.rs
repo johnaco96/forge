@@ -10,6 +10,7 @@
 
 pub mod error;
 pub mod experience;
+pub mod health;
 pub mod routing;
 pub mod sqlite;
 pub mod team;
@@ -22,5 +23,6 @@ pub use experience::{
     FailureFilter, FailureSummary, HistoryFilter, RunHistoryEntry, TaskExperience, TaskSimilarity,
 };
 pub use forge_core::task::TaskRevisionId;
+pub use health::{HealthRunEvidence, PatchFacts};
 pub use sqlite::{RunSummary, Store};
 pub use world::WorldModelQuery;

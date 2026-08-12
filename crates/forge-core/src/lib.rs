@@ -21,6 +21,7 @@ pub mod agent;
 pub mod config;
 pub mod events;
 pub mod experiment;
+pub mod health;
 pub mod ids;
 pub mod integrity;
 pub mod patch;
@@ -43,6 +44,14 @@ pub use experiment::{
     Comparison, ComparisonInput, ComparisonKey, ComparisonRelation, DimensionComparison,
     Experiment, ExperimentEvent, ExperimentEventPayload, ExperimentRecordingSink, ExperimentStatus,
     PairwiseComparison,
+};
+pub use health::{
+    AttributionLevel, ChangeClassification, DimensionStatus, ExecutionAttribution, HealthDimension,
+    HealthDimensionKind, HealthError, HealthEvent, HealthEventPayload, HealthEvidence,
+    HealthMeasurement, HealthProvenance, HealthSnapshotStatus, HealthTrend, MaterialityPolicy,
+    MeasuredRepositoryState, MeasuredStateKind, MeasurementIdentity, ObservationScope,
+    RepositoryHealthDiff, RepositoryHealthSnapshot, RepositoryHealthTrends, RunPatchState,
+    TrendDirection, TrendPoint,
 };
 pub use ids::{
     AgentId, ExperimentId, IdError, RoutingDecisionId, RunId, TaskId, TeamArtifactId,

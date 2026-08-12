@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use forge_core::ids::WorldModelSnapshotId;
-use forge_core::ids::{ExperimentId, TaskId};
+use forge_core::ids::{ExperimentId, HealthSnapshotId, TaskId};
 use forge_core::run::RunOutcome;
 use forge_store::{FailureFilter, HistoryFilter};
 
@@ -185,6 +185,33 @@ enum Command {
         #[command(subcommand)]
         command: WorldCommand,
     },
+
+    /// Measure and compare repository health over time.
+    Health {
+        #[command(subcommand)]
+        command: HealthCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum HealthCommand {
+    /// Build an immutable health snapshot for the current exact commit.
+    Build,
+    /// Show a health snapshot's raw measurements and provenance.
+    Show {
+        /// Snapshot id, e.g. `H-0012`. Defaults to the current snapshot.
+        id: Option<HealthSnapshotId>,
+    },
+    /// Compare two health snapshots.
+    Diff {
+        /// Baseline. Defaults to the nearest prior snapshot on the same
+        /// ancestry chain.
+        from: Option<HealthSnapshotId>,
+        /// Target. Defaults to the current snapshot.
+        to: Option<HealthSnapshotId>,
+    },
+    /// Report per-dimension trends across recorded history.
+    Trend,
 }
 
 #[derive(Subcommand)]
@@ -464,6 +491,31 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
         Command::Experiments { command } => match command {
             ExperimentsCommand::List { limit } => {
                 commands::experience::experiments(cli.repo, limit).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+        },
+        Command::Health { command } => match command {
+            HealthCommand::Build => {
+                let exit = commands::health::build(cli.repo).await?;
+                Ok(match exit {
+                    commands::health::HealthBuildExit::Complete => std::process::ExitCode::SUCCESS,
+                    // Partial health is a real, reportable outcome, not a
+                    // tool failure; it exits distinctly so scripts can tell.
+                    commands::health::HealthBuildExit::NotComplete => {
+                        std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                    }
+                })
+            }
+            HealthCommand::Show { id } => {
+                commands::health::show(cli.repo, id).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+            HealthCommand::Diff { from, to } => {
+                commands::health::diff(cli.repo, from, to).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+            HealthCommand::Trend => {
+                commands::health::trend(cli.repo).await?;
                 Ok(std::process::ExitCode::SUCCESS)
             }
         },

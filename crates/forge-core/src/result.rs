@@ -205,7 +205,7 @@ impl std::fmt::Display for Score {
 }
 
 /// Which way is better for a raw measurement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
     #[serde(rename = "maximize", alias = "higher_is_better")]
