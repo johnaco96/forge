@@ -29,6 +29,7 @@ use crate::integrity::EvaluationIntegrity;
 use crate::patch::{ExcludedEntry, PatchWarning};
 use crate::result::Verdict;
 use crate::security::SecurityPosture;
+use crate::world::WorldModelContextReference;
 
 /// How a run's agent execution was produced.
 ///
@@ -468,6 +469,9 @@ pub struct AgentRun {
     pub selection_source: SelectionSource,
     /// The commit every competing run for this task starts from.
     pub base_commit: String,
+    /// Exact world-model facts supplied to this run's agent, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_model_context: Option<WorldModelContextReference>,
     pub status: RunStatus,
     pub created_at: DateTime<Utc>,
     /// Set when the agent actually starts, so agent time can be separated from
@@ -532,6 +536,7 @@ impl AgentRun {
             execution_provenance: ExecutionProvenance::Unknown,
             selection_source: SelectionSource::Manual,
             base_commit: base_commit.into(),
+            world_model_context: None,
             status: RunStatus::Pending,
             created_at: Utc::now(),
             started_at: None,

@@ -19,6 +19,7 @@ use forge_core::run::AgentExecution;
 use forge_core::security::AgentSecurity;
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
+use forge_core::world::WorldModelContext;
 
 use crate::error::AgentResult;
 
@@ -30,6 +31,9 @@ pub struct RunContext<'a> {
     /// the working directory; without host containment it cannot enforce that
     /// the process stays inside it.
     pub workspace: &'a Workspace,
+    /// Compact deterministic facts from an exact snapshot of the workspace
+    /// base commit. Absence is a supported fallback.
+    pub world_model: Option<&'a WorldModelContext>,
     pub config: &'a AgentConfig,
     /// Where the adapter records what happened, as it happens.
     pub events: &'a dyn EventSink,
@@ -52,6 +56,7 @@ impl<'a> RunContext<'a> {
             run_id,
             task,
             workspace,
+            world_model: None,
             config,
             events,
             timeout: config.timeout_secs.map(Duration::from_secs),
@@ -61,6 +66,11 @@ impl<'a> RunContext<'a> {
 
     pub fn with_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    pub fn with_world_model(mut self, world_model: Option<&'a WorldModelContext>) -> Self {
+        self.world_model = world_model;
         self
     }
 }

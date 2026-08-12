@@ -16,7 +16,7 @@ use forge_agent::error::{AgentError, AgentResult};
 use forge_core::agent::{AdapterStatus, AgentDescriptor};
 use forge_core::config::ForgeConfig;
 use forge_core::events::EventPayload;
-use forge_core::ids::{AgentId, TaskId};
+use forge_core::ids::{AgentId, TaskId, WorldModelFactId, WorldModelSnapshotId};
 use forge_core::integrity::ProtectionPolicy;
 use forge_core::result::{EvaluatorKind, Verdict};
 use forge_core::run::{
@@ -25,6 +25,12 @@ use forge_core::run::{
 };
 use forge_core::task::{
     BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskMetadata,
+};
+use forge_core::world::{
+    Component, EvidenceConfidence, ExtractorIdentity, ExtractorRecord, ExtractorStatus,
+    FactMetadata, RepositoryPath, SourceLocation, WORLD_MODEL_SCHEMA_VERSION, WorldEntityKind,
+    WorldModelFacts, WorldModelProvenance, WorldModelProvenanceSource, WorldModelSnapshot,
+    WorldModelSnapshotSource, WorldModelSnapshotStatus,
 };
 use forge_git::Repository;
 use forge_runner::{RunRequest, Runner, RunnerError};
@@ -209,7 +215,8 @@ impl AgentAdapter for FakeAgent {
     }
 
     async fn execute(&self, ctx: &RunContext<'_>) -> AgentResult<AgentExecution> {
-        let prompt = forge_agent::build_agent_prompt(ctx.task, ctx.workspace);
+        let prompt =
+            forge_agent::build_agent_prompt_with_context(ctx.task, ctx.workspace, ctx.world_model);
         self.prompts.lock().unwrap().push(prompt.clone());
         ctx.events.emit(EventPayload::PromptSubmitted { prompt });
 
@@ -331,6 +338,7 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     );
     assert_eq!(report.outcome(), RunOutcome::Passed);
     assert_eq!(report.run.evaluation_verdict, Some(Verdict::Pass));
+    assert!(report.run.world_model_context.is_none());
 
     // The patch was read out of Git, not reported by the agent.
     let patch = report.run.patch.as_ref().unwrap();
@@ -390,6 +398,84 @@ async fn the_agent_receives_the_task_contract_in_its_prompt() {
     assert!(prompt.contains("value.txt must remain a single integer"));
     assert!(prompt.contains(".forge/worktrees/R-0001"));
     assert!(prompt.contains("You are not the judge of this work"));
+}
+
+#[tokio::test]
+async fn an_exact_world_model_supplies_and_records_compact_agent_context() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let commit = fixture.repo.head_commit().unwrap();
+    let snapshot_id = WorldModelSnapshotId::sequential(1);
+    let fact_id = WorldModelFactId::stable(WorldEntityKind::Component, "value-storage");
+    let snapshot = WorldModelSnapshot {
+        snapshot_id: snapshot_id.clone(),
+        repository: "distributed-runtime".into(),
+        commit: commit.clone(),
+        created_at: chrono::Utc::now(),
+        source: WorldModelSnapshotSource::Deterministic,
+        schema_version: WORLD_MODEL_SCHEMA_VERSION.into(),
+        status: WorldModelSnapshotStatus::Complete,
+        extractors: vec![ExtractorRecord {
+            identity: ExtractorIdentity::new("fixture", "1"),
+            required: true,
+            status: ExtractorStatus::Completed,
+            facts_produced: 1,
+            configuration_fingerprint: "fixture".into(),
+            error: None,
+        }],
+        facts: WorldModelFacts {
+            components: vec![Component {
+                metadata: FactMetadata::new(
+                    fact_id.clone(),
+                    snapshot_id.clone(),
+                    EvidenceConfidence::Observed,
+                    WorldModelProvenance {
+                        extractor: ExtractorIdentity::new("fixture", "1"),
+                        source: WorldModelProvenanceSource::SourceCode {
+                            location: SourceLocation::new(
+                                RepositoryPath::new("value.txt").unwrap(),
+                                &commit,
+                            ),
+                        },
+                    },
+                ),
+                name: "value storage".into(),
+                description: "Owns value.txt".into(),
+                paths: vec![RepositoryPath::new("value.txt").unwrap()],
+                parent: None,
+                tags: Vec::new(),
+                related_tasks: vec![TaskId::sequential(1042)],
+            }],
+            ..Default::default()
+        },
+    };
+    runner
+        .store()
+        .insert_world_model_snapshot(&snapshot)
+        .await
+        .unwrap();
+    let agent = edits("value.txt", "2\n");
+    let report = runner
+        .execute(
+            RunRequest::new(task(&[("tests", "true")]), "claude"),
+            &agent,
+        )
+        .await
+        .unwrap();
+
+    let reference = report.run.world_model_context.as_ref().unwrap();
+    assert_eq!(reference.snapshot_id, snapshot_id);
+    assert_eq!(reference.fact_ids, vec![fact_id.clone()]);
+    let prompt = &agent.prompts()[0];
+    assert!(prompt.contains("Repository architecture context"));
+    assert!(prompt.contains(fact_id.as_str()));
+    let stored = runner
+        .store()
+        .load_run(&report.run.run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.world_model_context, report.run.world_model_context);
 }
 
 // ------------------------------------------------------- the trust boundary

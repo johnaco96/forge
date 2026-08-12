@@ -8,6 +8,7 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
+use forge_core::ids::WorldModelSnapshotId;
 use forge_core::ids::{ExperimentId, TaskId};
 use forge_core::run::RunOutcome;
 use forge_store::{FailureFilter, HistoryFilter};
@@ -178,6 +179,56 @@ enum Command {
         #[command(subcommand)]
         command: ExperimentsCommand,
     },
+
+    /// Build and inspect immutable repository world models.
+    World {
+        #[command(subcommand)]
+        command: WorldCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum WorldCommand {
+    /// Build a snapshot for the repository's current commit.
+    Build,
+    /// Show the current or a named immutable snapshot.
+    Show {
+        snapshot: Option<WorldModelSnapshotId>,
+    },
+    /// Query typed facts in the current or a named snapshot.
+    Query {
+        #[arg(value_enum)]
+        kind: WorldQueryKindArg,
+        term: Option<String>,
+        #[arg(long)]
+        snapshot: Option<WorldModelSnapshotId>,
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum WorldQueryKindArg {
+    All,
+    #[value(alias = "components")]
+    Component,
+    #[value(alias = "modules")]
+    Module,
+    #[value(alias = "interfaces")]
+    Interface,
+    #[value(alias = "contracts")]
+    Contract,
+    #[value(alias = "invariants")]
+    Invariant,
+    #[value(alias = "dependencies")]
+    Dependency,
+    Ownership,
+    #[value(alias = "performance", alias = "performance-constraints")]
+    PerformanceConstraint,
+    #[value(alias = "decisions")]
+    HistoricalDecision,
+    #[value(alias = "failure", alias = "failures")]
+    KnownFailureMode,
 }
 
 #[derive(Subcommand)]
@@ -416,6 +467,30 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 Ok(std::process::ExitCode::SUCCESS)
             }
         },
+        Command::World { command } => match command {
+            WorldCommand::Build => {
+                let exit = commands::world::build(cli.repo).await?;
+                Ok(match exit {
+                    commands::world::WorldBuildExit::Complete => std::process::ExitCode::SUCCESS,
+                    commands::world::WorldBuildExit::NotComplete => {
+                        std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                    }
+                })
+            }
+            WorldCommand::Show { snapshot } => {
+                commands::world::show(cli.repo, snapshot).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+            WorldCommand::Query {
+                kind,
+                term,
+                snapshot,
+                limit,
+            } => {
+                commands::world::query(cli.repo, snapshot, kind, term, limit).await?;
+                Ok(std::process::ExitCode::SUCCESS)
+            }
+        },
     }
 }
 
@@ -476,6 +551,12 @@ mod tests {
             vec!["forge", "task", "similar", "T-1042"],
             vec!["forge", "experiments", "list"],
             vec!["forge", "export", "--format", "jsonl"],
+            vec!["forge", "world", "build"],
+            vec!["forge", "world", "show"],
+            vec!["forge", "world", "show", "WM-0001"],
+            vec!["forge", "world", "query", "component", "storage"],
+            vec!["forge", "world", "query", "dependencies", "storage"],
+            vec!["forge", "world", "query", "failures", "scheduler"],
             vec!["forge", "--repo", "/tmp/repo", "agent", "list"],
         ] {
             Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));

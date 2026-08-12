@@ -143,6 +143,14 @@ impl TeamCoordinator {
             plan,
             request.plan_provenance.clone(),
         );
+        if self.config.world_model.enabled {
+            team.world_model_context = self
+                .store
+                .world_context_for_task(&request.task, base.as_str(), 12)
+                .await?
+                .as_ref()
+                .map(Into::into);
+        }
         let mut events = Vec::new();
         emit(
             &team,
@@ -423,7 +431,7 @@ impl TeamCoordinator {
             });
         }
         let (assignment, selected_agent) = self
-            .resolve_assignment(definition, &node_task, request.timeout)
+            .resolve_assignment(definition, &node_task, input_commit, request.timeout)
             .await?;
         {
             let node = team
@@ -476,6 +484,7 @@ impl TeamCoordinator {
         &self,
         definition: &TeamPlanNode,
         task: &EngineeringTask,
+        input_commit: &str,
         timeout: Option<Duration>,
     ) -> TeamResult<(ResolvedTeamAssignment, AgentId)> {
         match definition.assignment.as_ref() {
@@ -515,8 +524,16 @@ impl TeamCoordinator {
                     self.config.routing.exploration_policy,
                     Utc::now(),
                 );
+                let world_model_snapshot_id = if self.config.world_model.enabled {
+                    self.store
+                        .world_model_for_commit(&task.repository, input_commit)
+                        .await?
+                        .map(|snapshot| snapshot.snapshot_id)
+                } else {
+                    None
+                };
                 let record = RoutingContract::new(self.store.clone())
-                    .route(&routing, &self.config.routing)
+                    .route_with_world_model(&routing, &self.config.routing, world_model_snapshot_id)
                     .await?;
                 match &record.decision {
                     RoutingDecision::Selected { agent, .. } => Ok((

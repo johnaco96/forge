@@ -12,6 +12,7 @@
 
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
+use forge_core::world::WorldModelContext;
 
 /// Builds the instruction for one task in one workspace.
 ///
@@ -19,6 +20,16 @@ use forge_core::workspace::Workspace;
 /// break, where it is allowed to work, that its own claims are not evidence,
 /// and what will be run against its work.
 pub fn build_agent_prompt(task: &EngineeringTask, workspace: &Workspace) -> String {
+    build_agent_prompt_with_context(task, workspace, None)
+}
+
+/// Builds the shared provider-neutral prompt with compact facts selected from
+/// an exact repository snapshot.
+pub fn build_agent_prompt_with_context(
+    task: &EngineeringTask,
+    workspace: &Workspace,
+    world_model: Option<&WorldModelContext>,
+) -> String {
     let mut prompt = String::new();
 
     prompt.push_str(&format!("# Engineering task {}\n\n", task.task_id));
@@ -63,6 +74,23 @@ pub fn build_agent_prompt(task: &EngineeringTask, workspace: &Workspace) -> Stri
          nothing you do elsewhere on this machine will be captured, and changing \
          files outside it will invalidate the run.\n\n",
     );
+
+    if let Some(context) = world_model {
+        prompt.push_str("## Repository architecture context\n\n");
+        prompt.push_str(&format!(
+            "Forge selected the following facts from world-model snapshot {} bound to commit {} ({:?}). Treat each item as scoped evidence, not as a substitute for inspecting the code.\n\n",
+            context.snapshot_id, context.commit, context.relation
+        ));
+        for fact in &context.facts {
+            prompt.push_str(&format!(
+                "- [{} {}] {}\n",
+                fact.kind.as_str(),
+                fact.id,
+                fact.summary
+            ));
+        }
+        prompt.push('\n');
+    }
 
     prompt.push_str("## How your work will be judged\n\n");
     prompt.push_str(

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::agent::AgentConfig;
-use crate::ids::{AgentId, ExperimentId, RoutingDecisionId, RunId, TaskId};
+use crate::ids::{AgentId, ExperimentId, RoutingDecisionId, RunId, TaskId, WorldModelSnapshotId};
 use crate::integrity::IntegrityStatus;
 use crate::result::EvaluationSummary;
 use crate::run::{
@@ -676,6 +676,10 @@ pub struct RoutingDecisionRecord {
     pub run_id: Option<RunId>,
     pub task_id: TaskId,
     pub task_revision_id: TaskRevisionId,
+    /// Exact repository state available as decision context. It is recorded
+    /// for reproducibility but excluded from historical-baseline-v1 scoring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_model_snapshot_id: Option<WorldModelSnapshotId>,
     pub created_at: DateTime<Utc>,
     pub candidates: Vec<CandidateAgent>,
     pub selected: Option<CandidateAgent>,

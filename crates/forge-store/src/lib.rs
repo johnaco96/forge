@@ -13,6 +13,7 @@ pub mod experience;
 pub mod routing;
 pub mod sqlite;
 pub mod team;
+pub mod world;
 
 pub use error::{StoreError, StoreResult};
 pub use experience::{
@@ -22,3 +23,4 @@ pub use experience::{
 };
 pub use forge_core::task::TaskRevisionId;
 pub use sqlite::{RunSummary, Store};
+pub use world::WorldModelQuery;

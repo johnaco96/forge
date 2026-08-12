@@ -152,8 +152,8 @@ impl Store {
                  decision_id, run_id, task_id, task_revision_id, created_at, decision_kind,
                  selected_agent_id, selected_config_fingerprint, router_version,
                  evidence_policy_version, historical_cutoff, evidence_fingerprint,
-                 eligible_evidence_count, record_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+                 eligible_evidence_count, record_json, world_model_snapshot_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
              ON CONFLICT (decision_id) DO UPDATE SET
                  run_id = COALESCE(routing_decisions.run_id, excluded.run_id),
                  record_json = excluded.record_json",
@@ -182,6 +182,12 @@ impl Store {
         .bind(&record.evidence_fingerprint)
         .bind(eligible as i64)
         .bind(serde_json::to_string(record)?)
+        .bind(
+            record
+                .world_model_snapshot_id
+                .as_ref()
+                .map(|snapshot_id| snapshot_id.as_str()),
+        )
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -568,10 +574,11 @@ impl Store {
                  run_id, task_id, agent_id, config_fingerprint, experiment_id, base_commit, status,
                  created_at, started_at, finished_at, exit_code, failure_reason, workspace_path,
                  input_tokens, output_tokens, cost_usd, record_json, agent_status, outcome, branch,
-                 task_revision_id, execution_provenance, selection_source, routing_decision_id
+                 task_revision_id, execution_provenance, selection_source, routing_decision_id,
+                 world_model_snapshot_id
              ) VALUES (
                  ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24
+                 ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
              )
              ON CONFLICT (run_id) DO UPDATE SET
                  status = excluded.status,
@@ -620,6 +627,11 @@ impl Store {
             SelectionSource::Automatic { decision_id, .. } => Some(decision_id.as_str()),
             _ => None,
         })
+        .bind(
+            run.world_model_context
+                .as_ref()
+                .map(|context| context.snapshot_id.as_str()),
+        )
         .execute(&self.pool)
         .await?;
         Ok(())

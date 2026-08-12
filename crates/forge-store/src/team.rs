@@ -57,6 +57,7 @@ impl Store {
                 || fingerprint != team.plan.fingerprint
                 || existing_team.root_task_id != team.root_task_id
                 || existing_team.plan_provenance != team.plan_provenance
+                || existing_team.world_model_context != team.world_model_context
                 || existing_team.created_at != team.created_at
             {
                 return Err(StoreError::TeamPlanConflict {
@@ -90,8 +91,8 @@ impl Store {
                 team_execution_id, root_task_id, root_task_revision_id, base_commit,
                 plan_version, plan_fingerprint, plan_source, execution_provenance,
                 status, outcome, final_commit, baseline_run_id, created_at, completed_at,
-                record_json
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+                record_json, world_model_snapshot_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
              ON CONFLICT (team_execution_id) DO UPDATE SET
                 execution_provenance = excluded.execution_provenance,
                 status = excluded.status,
@@ -125,6 +126,11 @@ impl Store {
         .bind(team.created_at.to_rfc3339())
         .bind(team.completed_at.map(|timestamp| timestamp.to_rfc3339()))
         .bind(serde_json::to_string(team)?)
+        .bind(
+            team.world_model_context
+                .as_ref()
+                .map(|context| context.snapshot_id.as_str()),
+        )
         .execute(&mut *tx)
         .await?;
 

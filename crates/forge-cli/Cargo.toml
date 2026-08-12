@@ -20,6 +20,7 @@ forge-runner.workspace = true
 forge-router.workspace = true
 forge-store.workspace = true
 forge-team.workspace = true
+forge-world.workspace = true
 
 anyhow.workspace = true
 chrono.workspace = true

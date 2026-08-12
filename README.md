@@ -40,8 +40,9 @@ base commit into a comparative experiment.
 | **`forge compete task.yaml --agents claude,codex`** | ✅ |
 | **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ |
 | **Provider-agnostic historical routing and trusted evidence policy** | ✅ |
-| **Task-driven multi-agent DAG execution with final evaluation** | ✅ Phase 5 review candidate |
-| Repository world model and later optimization | ⬜ later |
+| **Task-driven multi-agent DAG execution with final evaluation** | ✅ |
+| **Immutable, commit-bound Repository World Model** | ✅ Phase 6 review candidate |
+| Longitudinal repository optimization | ⬜ later |
 
 ---
 
@@ -115,6 +116,20 @@ is advisory, and the integrated candidate is independently checked through the
 normal patch, integrity, and evaluation pipeline. See
 [`docs/team-execution.md`](docs/team-execution.md) for the plan format and
 execution contract.
+
+To build and query static repository evidence without a live model:
+
+```bash
+forge world build
+forge world show
+forge world query component storage
+forge world query dependencies storage
+```
+
+World builds require a clean checkout so uncommitted content can never be
+mislabelled as truth about `HEAD`. See
+[`docs/world-model.md`](docs/world-model.md) for snapshot, provenance,
+staleness, extraction, and integration semantics.
 
 ### Exit codes
 
@@ -197,6 +212,8 @@ See [`docs/routing.md`](docs/routing.md) for pre-run features, provenance,
 evidence eligibility, readiness, decision contracts, and reproducibility.
 See [`docs/team-execution.md`](docs/team-execution.md) for task DAGs, typed
 handoffs, assignment, integration, review, and team persistence.
+See [`docs/world-model.md`](docs/world-model.md) for commit-bound architecture
+facts, deterministic extraction, typed queries, and exact agent context.
 
 ---
 
@@ -360,6 +377,16 @@ max_parallel_nodes = 1
 stop_on_required_node_failure = false
 ```
 
+Repository world-model extraction is static and works without an agent:
+
+```toml
+[world_model]
+enabled = true
+structure = true
+task_metadata = true
+history = true
+```
+
 ```toml
 [agents.claude]
 executable = "claude"          # for a non-standard install
@@ -457,6 +484,12 @@ forge-team (validated DAG scheduler)
 ├── forge-eval           independent final evaluation
 └── forge-store          team plan, lineage, artifacts, and events
 
+forge-world (provider-neutral extraction pipeline)
+├── static Rust workspace structure and dependency extraction
+├── task/component and immutable ledger evidence extraction
+├── commit binding, validation, staleness, and snapshot diff
+└── forge-store          immutable snapshots, facts, links, and lifecycle events
+
 All provider-agnostic domain contracts converge on forge-core.
 ```
 
@@ -471,6 +504,7 @@ All provider-agnostic domain contracts converge on forge-core.
 | `forge-router` | Candidate resolution, trusted evidence, and the versioned historical baseline. |
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
 | `forge-team` | Typed planning and deterministic DAG coordination over ordinary runs. |
+| `forge-world` | Static, language-extensible extraction into immutable repository snapshots. |
 | `forge-cli` | The `forge` binary. |
 
 Everything provider-specific lives in its adapter file:

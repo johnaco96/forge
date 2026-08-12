@@ -75,6 +75,9 @@ pub enum StoreError {
         subject: String,
     },
 
+    #[error("world-model snapshot `{snapshot_id}` is immutable and differs from the stored record")]
+    WorldModelSnapshotConflict { snapshot_id: String },
+
     #[error(
         "team node attempt `{team_execution_id}/{node_id}/{attempt}` is already linked to run `{existing}` and cannot be changed to `{attempted}`"
     )]

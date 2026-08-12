@@ -55,6 +55,7 @@ use forge_core::run::{
 use forge_core::security::SecurityPosture;
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
+use forge_core::world::WorldModelContext;
 use forge_eval::{EvalContext, EvaluationEngine, EvaluationPlan};
 use forge_executor::{
     EnvPolicy, ProcessRunner, WorkspaceProvider, WorktreeProvider, capture_candidate_patch,
@@ -200,6 +201,7 @@ struct PipelineInputs<'a> {
     adapter: &'a dyn AgentAdapter,
     evaluation_plan: &'a EvaluationPlan,
     experiment_id: Option<&'a ExperimentId>,
+    world_model: Option<&'a WorldModelContext>,
 }
 
 impl Runner {
@@ -434,6 +436,13 @@ impl Runner {
         // Resolve trusted evaluation configuration before any candidate code
         // executes. The resulting plan is never rebuilt from the workspace.
         let evaluation_plan = EvaluationPlan::resolve(&request.task);
+        let world_model = if self.config.world_model.enabled {
+            self.store
+                .world_context_for_task(&request.task, base_commit.as_str(), 12)
+                .await?
+        } else {
+            None
+        };
         let run_id = self.store.next_run_id().await?;
 
         // --- From here on, every path persists a run. ---
@@ -446,6 +455,7 @@ impl Runner {
         );
         run.execution_provenance = request.execution_provenance;
         run.selection_source = request.selection_source.clone();
+        run.world_model_context = world_model.as_ref().map(Into::into);
         run.security = Some(SecurityPosture::current(adapter.security()));
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());
@@ -479,6 +489,7 @@ impl Runner {
             adapter,
             evaluation_plan: &evaluation_plan,
             experiment_id,
+            world_model: world_model.as_ref(),
         };
         let result = self.run_inner(&request, &mut run, &inputs).await;
 
@@ -560,6 +571,7 @@ impl Runner {
             inputs.sink,
             inputs.artifacts_dir.to_path_buf(),
         )
+        .with_world_model(inputs.world_model)
         .with_timeout(timeout);
 
         match inputs.adapter.execute(&ctx).await {

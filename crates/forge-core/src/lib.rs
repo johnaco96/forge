@@ -31,11 +31,12 @@ pub mod security;
 pub mod task;
 pub mod team;
 pub mod workspace;
+pub mod world;
 
 pub use agent::{AdapterStatus, AgentConfig, AgentDescriptor, Capability};
 pub use config::{
     AgentSettings, BaselineRoutingConfig, CONFIG_FILE, ConfigError, FORGE_DIR, ForgeConfig, Layout,
-    RoutingConfig, TeamConfig,
+    RoutingConfig, TeamConfig, WorldModelConfig,
 };
 pub use events::{EvaluationSubject, Event, EventPayload, EventSink, NullSink, RecordingSink};
 pub use experiment::{
@@ -45,7 +46,7 @@ pub use experiment::{
 };
 pub use ids::{
     AgentId, ExperimentId, IdError, RoutingDecisionId, RunId, TaskId, TeamArtifactId,
-    TeamExecutionId, TeamNodeId,
+    TeamExecutionId, TeamNodeId, WorldModelFactId, WorldModelSnapshotId,
 };
 pub use integrity::{
     CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,
@@ -89,3 +90,4 @@ pub use team::{
     TeamStatus, ValidatedTeamPlan,
 };
 pub use workspace::{Workspace, WorkspaceKind};
+pub use world::*;

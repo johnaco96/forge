@@ -19,6 +19,7 @@ use crate::integrity::EvaluationIntegrity;
 use crate::result::{Evaluation, Verdict};
 use crate::run::{ExecutionProvenance, PatchSummary, RunOutcome, SelectionSource};
 use crate::task::{EngineeringTask, TaskRevisionId};
+use crate::world::WorldModelContextReference;
 
 pub const TEAM_PLAN_VERSION: &str = "team-plan-v1";
 
@@ -674,6 +675,9 @@ pub struct TeamExecution {
     pub root_task_id: TaskId,
     pub root_task_revision_id: TaskRevisionId,
     pub base_commit: String,
+    /// Exact repository facts available when the root plan began.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub world_model_context: Option<WorldModelContextReference>,
     pub plan: ValidatedTeamPlan,
     pub plan_provenance: PlanProvenance,
     pub execution_provenance: ExecutionProvenance,
@@ -735,6 +739,7 @@ impl TeamExecution {
             root_task_id,
             root_task_revision_id,
             base_commit: base_commit.into(),
+            world_model_context: None,
             plan,
             plan_provenance,
             execution_provenance: ExecutionProvenance::Unknown,

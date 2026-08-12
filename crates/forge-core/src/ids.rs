@@ -155,6 +155,16 @@ define_id!(
     "TA"
 );
 define_id!(
+    /// Identifies one immutable repository world-model snapshot.
+    WorldModelSnapshotId,
+    "WM"
+);
+define_id!(
+    /// Stable repository-scoped identity for one world-model fact.
+    WorldModelFactId,
+    "WF"
+);
+define_id!(
     /// Identifies an agent as Forge knows it, e.g. `claude` or `codex`.
     AgentId,
     "A"
@@ -173,6 +183,7 @@ mod tests {
         assert_eq!(TeamExecutionId::sequential(4).as_str(), "TE-0004");
         assert_eq!(TeamNodeId::sequential(5).as_str(), "TN-0005");
         assert_eq!(TeamArtifactId::sequential(6).as_str(), "TA-0006");
+        assert_eq!(WorldModelSnapshotId::sequential(7).as_str(), "WM-0007");
     }
 
     #[test]

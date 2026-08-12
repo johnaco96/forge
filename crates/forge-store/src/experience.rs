@@ -1824,7 +1824,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn phase_three_database_migrates_in_place_and_binds_old_runs_to_a_snapshot() {
+    async fn phase_five_database_migrates_in_place_and_preserves_older_ledger_data() {
         let temp = tempfile::tempdir().unwrap();
         let old_migrations = temp.path().join("old-migrations");
         std::fs::create_dir(&old_migrations).unwrap();
@@ -1836,6 +1836,9 @@ mod tests {
             "0004_evaluator_results.sql",
             "0005_experience_queries.sql",
             "0006_immutable_task_revisions.sql",
+            "0007_execution_provenance.sql",
+            "0008_routing_decisions.sql",
+            "0009_team_executions.sql",
         ] {
             std::fs::copy(
                 manifest.join("migrations").join(name),
@@ -1963,9 +1966,8 @@ mod tests {
         .unwrap();
         pool.close().await;
 
-        // Opening with current Forge applies the Phase 4 and Phase 5
-        // migrations to the Phase 3 file; no rebuild or data rewrite is
-        // required.
+        // Opening with current Forge applies only the additive Phase 6
+        // migration to the Phase 5 file; no rebuild or data rewrite is needed.
         let migrated = Store::open(&database).await.unwrap();
         let history = migrated
             .history(&HistoryFilter {
@@ -1991,6 +1993,7 @@ mod tests {
             ExecutionProvenance::Unknown
         );
         assert_eq!(migrated_run.selection_source, SelectionSource::Manual);
+        assert!(migrated_run.world_model_context.is_none());
         assert_eq!(
             migrated.export_records().await.unwrap()[0].selection_source,
             SelectionSource::Manual
@@ -2002,6 +2005,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        assert_eq!(migrated.world_model_count().await.unwrap(), 0);
     }
 
     #[tokio::test]

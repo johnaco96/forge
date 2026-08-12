@@ -122,11 +122,23 @@ impl RoutingContract {
         request: &RoutingRequest,
         config: &RoutingConfig,
     ) -> Result<RoutingDecisionRecord, RouterError> {
+        self.route_with_world_model(request, config, None).await
+    }
+
+    /// Records exact repository context without changing the versioned router
+    /// inputs, evidence fingerprint, or scoring behavior.
+    pub async fn route_with_world_model(
+        &self,
+        request: &RoutingRequest,
+        config: &RoutingConfig,
+        world_model_snapshot_id: Option<forge_core::WorldModelSnapshotId>,
+    ) -> Result<RoutingDecisionRecord, RouterError> {
         let evidence = self.evidence(request).await?;
         let decision_id = self.store.next_routing_decision_id().await?;
         let created_at = Utc::now();
-        let record =
+        let mut record =
             BaselineRouter::decide(request, evidence, config, decision_id.clone(), created_at);
+        record.world_model_snapshot_id = world_model_snapshot_id;
         self.store.save_routing_decision(&record).await?;
         self.store
             .append_routing_events(&routing_events(&record))
@@ -199,6 +211,7 @@ impl BaselineRouter {
             run_id: None,
             task_id: request.task_revision().task().task_id.clone(),
             task_revision_id: request.task_revision().revision_id().clone(),
+            world_model_snapshot_id: None,
             created_at,
             candidates: request.candidates().as_slice().to_vec(),
             selected,
@@ -454,7 +467,7 @@ fn routing_events(record: &RoutingDecisionRecord) -> Vec<RoutingEvent> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use forge_core::ids::{RunId, TaskId};
+    use forge_core::ids::{RunId, TaskId, WorldModelSnapshotId};
     use forge_core::routing::{
         AgentEvidenceCount, ExplorationPolicy, MinimumRoutingEvidence, RoutingEvidenceRecord,
         RoutingEvidenceSnapshot, RoutingEvidenceSummary, RoutingFeatures, UnresolvedRoutingTarget,
@@ -464,6 +477,10 @@ mod tests {
     };
     use forge_core::task::{
         EngineeringTask, EvaluationSpec, TaskClassification, TaskMetadata, TaskRevision,
+    };
+    use forge_core::world::{
+        WORLD_MODEL_SCHEMA_VERSION, WorldModelFacts, WorldModelSnapshot, WorldModelSnapshotSource,
+        WorldModelSnapshotStatus,
     };
 
     fn descriptor(
@@ -905,5 +922,32 @@ mod tests {
             events.last().unwrap().payload,
             RoutingEventPayload::RoutingCompetitionRecommended
         ));
+
+        let snapshot_id = WorldModelSnapshotId::sequential(1);
+        store
+            .insert_world_model_snapshot(&WorldModelSnapshot {
+                snapshot_id: snapshot_id.clone(),
+                repository: "forge".into(),
+                commit: "a".repeat(40),
+                created_at: Utc::now(),
+                source: WorldModelSnapshotSource::Deterministic,
+                schema_version: WORLD_MODEL_SCHEMA_VERSION.into(),
+                status: WorldModelSnapshotStatus::Complete,
+                extractors: Vec::new(),
+                facts: WorldModelFacts::default(),
+            })
+            .await
+            .unwrap();
+        let contextual = RoutingContract::new(store.clone())
+            .route_with_world_model(
+                &request,
+                &RoutingConfig::default(),
+                Some(snapshot_id.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(contextual.world_model_snapshot_id, Some(snapshot_id));
+        assert_eq!(contextual.evidence_fingerprint, record.evidence_fingerprint);
+        assert_eq!(contextual.decision.scores(), record.decision.scores());
     }
 }

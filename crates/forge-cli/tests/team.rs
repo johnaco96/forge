@@ -308,6 +308,7 @@ async fn controlled_team_passes_with_handoffs_final_evaluation_and_baseline() {
     assert_eq!(team.outcome, Some(TeamOutcome::Passed));
     assert_eq!(team.plan_provenance.source, PlanSourceKind::Explicit);
     assert_eq!(team.execution_provenance, ExecutionProvenance::Synthetic);
+    assert!(team.world_model_context.is_none());
     assert_eq!(team.nodes.len(), 3);
     assert_eq!(team.artifacts.len(), 5);
     assert_eq!(team.run_ids().len(), 3);

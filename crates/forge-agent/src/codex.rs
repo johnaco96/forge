@@ -29,7 +29,7 @@ use serde::Deserialize;
 
 use crate::adapter::{AgentAdapter, RunContext};
 use crate::error::{AgentError, AgentResult};
-use crate::prompt::build_agent_prompt;
+use crate::prompt::build_agent_prompt_with_context;
 
 /// Executable Forge looks for when none is configured.
 pub const DEFAULT_EXECUTABLE: &str = "codex";
@@ -304,7 +304,7 @@ impl AgentAdapter for CodexAdapter {
 
     async fn execute(&self, ctx: &RunContext<'_>) -> AgentResult<AgentExecution> {
         let started_at = Utc::now();
-        let prompt = build_agent_prompt(ctx.task, ctx.workspace);
+        let prompt = build_agent_prompt_with_context(ctx.task, ctx.workspace, ctx.world_model);
 
         write_artifact(&ctx.artifacts_dir, "prompt.txt", &prompt);
         ctx.events.emit(EventPayload::PromptSubmitted {

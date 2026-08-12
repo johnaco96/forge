@@ -109,6 +109,35 @@ pub struct TeamConfig {
     pub stop_on_required_node_failure: bool,
 }
 
+/// Small, deterministic Phase 6 extraction controls.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorldModelConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub structure: bool,
+    #[serde(default = "default_true")]
+    pub task_metadata: bool,
+    #[serde(default = "default_true")]
+    pub history: bool,
+}
+
+impl Default for WorldModelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            structure: true,
+            task_metadata: true,
+            history: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
 impl Default for TeamConfig {
     fn default() -> Self {
         Self {
@@ -217,6 +246,8 @@ pub struct ForgeConfig {
     pub routing: RoutingConfig,
     #[serde(default)]
     pub team: TeamConfig,
+    #[serde(default)]
+    pub world_model: WorldModelConfig,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agents: BTreeMap<String, AgentSettings>,
 }
@@ -242,6 +273,7 @@ impl ForgeConfig {
             },
             routing: RoutingConfig::default(),
             team: TeamConfig::default(),
+            world_model: WorldModelConfig::default(),
             agents: BTreeMap::new(),
         }
     }
@@ -421,6 +453,13 @@ impl ForgeConfig {
              max_parallel_nodes = {team_parallel}\n\
              stop_on_required_node_failure = {team_stop}\n\
              \n\
+             [world_model]\n\
+             # Static extraction only; no repository scripts or live models are run.\n\
+             enabled = {world_enabled}\n\
+             structure = {world_structure}\n\
+             task_metadata = {world_tasks}\n\
+             history = {world_history}\n\
+             \n\
              # Per-agent overrides. Unrecognized keys are passed to the adapter.\n\
              # [agents.claude]\n\
              # executable = \"claude\"\n\
@@ -443,6 +482,10 @@ impl ForgeConfig {
             prior_beta = default.routing.baseline.prior_beta,
             team_parallel = default.team.max_parallel_nodes,
             team_stop = default.team.stop_on_required_node_failure,
+            world_enabled = default.world_model.enabled,
+            world_structure = default.world_model.structure,
+            world_tasks = default.world_model.task_metadata,
+            world_history = default.world_model.history,
             exploration = match default.routing.exploration_policy {
                 ExplorationPolicy::None => "none",
                 ExplorationPolicy::CompeteWhenUncertain => "compete_when_uncertain",
@@ -591,6 +634,7 @@ timeout_secs = 3600
 "#;
         let config: ForgeConfig = toml::from_str(raw).unwrap();
         assert_eq!(config.routing, RoutingConfig::default());
+        assert_eq!(config.world_model, WorldModelConfig::default());
         assert_eq!(
             config.execution_provenance_for("claude"),
             ExecutionProvenance::Live

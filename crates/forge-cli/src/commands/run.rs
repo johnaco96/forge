@@ -153,8 +153,17 @@ async fn run_auto(
         config.routing.exploration_policy,
         Utc::now(),
     );
+    let resolved_base = runner.resolve_base(args.base.as_deref())?;
+    let world_model_snapshot_id = if config.world_model.enabled {
+        store
+            .world_model_for_commit(&task.repository, resolved_base.as_str())
+            .await?
+            .map(|snapshot| snapshot.snapshot_id)
+    } else {
+        None
+    };
     let record = RoutingContract::new(store.clone())
-        .route(&request, &config.routing)
+        .route_with_world_model(&request, &config.routing, world_model_snapshot_id)
         .await?;
     print_routing(&record, &args.task_path);
 
@@ -172,7 +181,7 @@ async fn run_auto(
         router_version: ROUTER_VERSION.into(),
         evidence_fingerprint: record.evidence_fingerprint.clone(),
     };
-    run_request.base_rev = args.base;
+    run_request.base_rev = Some(resolved_base.as_str().into());
     run_request.timeout = args.timeout_secs.map(Duration::from_secs);
     if args.keep_workspace {
         run_request.keep_workspace = Some(true);
