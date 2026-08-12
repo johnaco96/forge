@@ -41,8 +41,9 @@ base commit into a comparative experiment.
 | **History, agent statistics, failures, similarity, experiments, JSONL export** | ✅ |
 | **Provider-agnostic historical routing and trusted evidence policy** | ✅ |
 | **Task-driven multi-agent DAG execution with final evaluation** | ✅ |
-| **Immutable, commit-bound Repository World Model** | ✅ Phase 6 review candidate |
-| Longitudinal repository optimization | ⬜ later |
+| **Immutable, commit-bound Repository World Model** | ✅ |
+| **Longitudinal repository health and typed trends** | ✅ |
+| **Immutable, evidence-backed engineering policy optimization** | ✅ Phase 8 review candidate |
 
 ---
 
@@ -91,6 +92,22 @@ These commands describe recorded evidence. Forge can also apply the
 deterministic `historical-baseline-v1` policy to its trusted snapshot with
 `forge run task.yaml --agent auto`. It selects only when readiness and the
 score margin permit; otherwise it stops explicitly without running an agent.
+
+Forge also records the engineering policy governing each new run and can build
+bounded, store-backed proposals without changing evaluation truth:
+
+```bash
+forge policy show
+forge policy propose --max-world-facts 8
+forge policy compare PP-0001
+forge policy experiment create PP-0001
+forge policy promote PP-0002 --actor operator
+forge policy rollback P-0001 --reason "observed regression"
+```
+
+Promotion and rollback are explicit. See
+[`docs/policy-optimization.md`](docs/policy-optimization.md) for the guardrail,
+cutoff, experiment, approval, and reproducibility contract.
 
 To run independent attempts from one resolved base and compare their evidence
 without choosing an overall winner:
@@ -214,6 +231,10 @@ See [`docs/team-execution.md`](docs/team-execution.md) for task DAGs, typed
 handoffs, assignment, integration, review, and team persistence.
 See [`docs/world-model.md`](docs/world-model.md) for commit-bound architecture
 facts, deterministic extraction, typed queries, and exact agent context.
+See [`docs/phase-7-longitudinal-health.md`](docs/phase-7-longitudinal-health.md)
+for missing-data, comparability, attribution, and trend semantics.
+See [`docs/policy-optimization.md`](docs/policy-optimization.md) for immutable
+engineering policies, evidence-backed proposals, canaries, and rollback.
 
 ---
 
@@ -490,6 +511,11 @@ forge-world (provider-neutral extraction pipeline)
 ├── commit binding, validation, staleness, and snapshot diff
 └── forge-store          immutable snapshots, facts, links, and lifecycle events
 
+forge-policy (policy-baseline-v1 optimization and lifecycle gates)
+├── forge-store          cutoff-safe evidence and immutable policy records
+├── forge-core           policy, proposal, decision, experiment, and event contracts
+└── forge-runner         ordinary execution linkage and bounded policy application
+
 All provider-agnostic domain contracts converge on forge-core.
 ```
 
@@ -505,6 +531,8 @@ All provider-agnostic domain contracts converge on forge-core.
 | `forge-runner` | The run pipeline. The engine a CLI, API, or scheduler each drives. |
 | `forge-team` | Typed planning and deterministic DAG coordination over ordinary runs. |
 | `forge-world` | Static, language-extensible extraction into immutable repository snapshots. |
+| `forge-health` | Immutable repository health snapshots, comparison, and trends. |
+| `forge-policy` | Cutoff-safe evidence resolution, deterministic optimization, and lifecycle gates. |
 | `forge-cli` | The `forge` binary. |
 
 Everything provider-specific lives in its adapter file:

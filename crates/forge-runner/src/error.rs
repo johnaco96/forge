@@ -38,6 +38,12 @@ pub enum RunnerError {
     #[error(transparent)]
     Store(#[from] forge_store::StoreError),
 
+    #[error(transparent)]
+    Policy(#[from] forge_policy::PolicyRuntimeError),
+
+    #[error("policy execution strategy is unavailable on this path: {0}")]
+    PolicyStrategy(String),
+
     #[error("run lifecycle error: {0}")]
     Lifecycle(#[from] forge_core::run::RunError),
 }

@@ -17,6 +17,7 @@ forge-eval.workspace = true
 forge-executor.workspace = true
 forge-git.workspace = true
 forge-health.workspace = true
+forge-policy.workspace = true
 forge-runner.workspace = true
 forge-router.workspace = true
 forge-store.workspace = true
@@ -32,4 +33,5 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+sqlx.workspace = true
 tempfile.workspace = true

@@ -240,9 +240,10 @@ results, and world-model facts are referenced by id, never copied.
 - Analysis follows single ancestor chains; diverged branches are labelled, not
   merged into one history.
 
-## Phase 7 versus Phase 8
+## Phase 7 evidence in Phase 8
 
-Phase 7 measures, compares, attributes conservatively, and reports. It does
-**not** change routing on a degrading trend, alter team planning, generate
-corrective tasks, launch agents on a regression, or train anything on health
-outcomes. Those are Phase 8.
+Phase 7 continues to measure, compare, attribute conservatively, and report;
+its truth semantics are unchanged. Phase 8 may admit comparable, cutoff-safe
+health snapshots as policy evidence, but missing and partial data remain missing
+or partial and a policy cannot change measurement direction. See
+[`policy-optimization.md`](policy-optimization.md) for that consumer boundary.

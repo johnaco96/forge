@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 
 use crate::{Store, StoreError, StoreResult};
 use forge_core::ids::WorldModelSnapshotId;
+use forge_core::policy::ContextSelectionStrategy;
 use forge_core::task::EngineeringTask;
 use forge_core::world::{
     SnapshotRelation, WorldEntityKind, WorldFactRecord, WorldModelContext, WorldModelDiff,
@@ -304,16 +305,46 @@ impl Store {
         commit: &str,
         limit: usize,
     ) -> StoreResult<Option<WorldModelContext>> {
+        self.world_context_for_policy(
+            task,
+            commit,
+            limit,
+            ContextSelectionStrategy::TaskRelevanceWithComponentsV1,
+            true,
+        )
+        .await
+    }
+
+    /// Reuses the Phase 6 exact-snapshot selector under bounded policy knobs.
+    pub async fn world_context_for_policy(
+        &self,
+        task: &EngineeringTask,
+        commit: &str,
+        limit: usize,
+        strategy: ContextSelectionStrategy,
+        include_failure_history: bool,
+    ) -> StoreResult<Option<WorldModelContext>> {
+        if strategy == ContextSelectionStrategy::None || limit == 0 {
+            return Ok(None);
+        }
         let Some(snapshot) = self
             .world_model_for_commit(&task.repository, commit)
             .await?
         else {
             return Ok(None);
         };
-        let terms = task
-            .components
-            .iter()
-            .map(|component| component.to_ascii_lowercase())
+        let component_terms = matches!(
+            strategy,
+            ContextSelectionStrategy::TaskRelevanceWithComponentsV1
+        )
+        .then_some(
+            task.components
+                .iter()
+                .map(|component| component.to_ascii_lowercase()),
+        )
+        .into_iter()
+        .flatten();
+        let terms = component_terms
             .chain(task.objective.split_whitespace().filter_map(|word| {
                 let normalized = word
                     .trim_matches(|character: char| !character.is_alphanumeric())
@@ -326,6 +357,11 @@ impl Store {
         let selected = records
             .into_iter()
             .filter(|record| {
+                if !include_failure_history
+                    && matches!(record, WorldFactRecord::KnownFailureMode(_))
+                {
+                    return false;
+                }
                 if let WorldFactRecord::Component(component) = record
                     && component.related_tasks.contains(&task.task_id)
                 {

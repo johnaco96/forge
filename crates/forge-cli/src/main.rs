@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand, ValueEnum};
 use forge_core::ids::WorldModelSnapshotId;
-use forge_core::ids::{ExperimentId, HealthSnapshotId, TaskId};
+use forge_core::ids::{
+    ExperimentId, HealthSnapshotId, PolicyExperimentId, PolicyId, PolicyProposalId, TaskId,
+};
+use forge_core::optimization::PolicyExperimentStatus;
 use forge_core::run::RunOutcome;
 use forge_store::{FailureFilter, HistoryFilter};
 
@@ -190,6 +193,85 @@ enum Command {
     Health {
         #[command(subcommand)]
         command: HealthCommand,
+    },
+
+    /// Inspect and evolve the repository's engineering policy.
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyCommand {
+    /// Show the active immutable policy and its fixed guardrails.
+    Show,
+    /// Show repository policy lineage and lifecycle status.
+    History {
+        #[arg(long, default_value_t = 50)]
+        limit: u32,
+    },
+    /// Build and persist one bounded evidence-backed proposal.
+    Propose {
+        /// Re-evaluate an existing candidate policy.
+        #[arg(long)]
+        candidate: Option<PolicyId>,
+        #[arg(long)]
+        max_world_facts: Option<u32>,
+        #[arg(long)]
+        timeout_secs: Option<u64>,
+        #[arg(long)]
+        minimum_score_margin: Option<f64>,
+        #[arg(long)]
+        learned_routing: Option<bool>,
+        #[arg(long, value_parser = parse_datetime, value_name = "RFC3339")]
+        cutoff: Option<DateTime<Utc>>,
+    },
+    /// Explain a persisted proposal without collapsing its tradeoffs.
+    Compare { proposal: PolicyProposalId },
+    /// Create and inspect bounded deterministic policy experiments.
+    Experiment {
+        #[command(subcommand)]
+        command: PolicyExperimentCommand,
+    },
+    /// Explicitly promote a proposal that passes every gate.
+    Promote {
+        proposal: PolicyProposalId,
+        #[arg(long, default_value = "cli")]
+        actor: String,
+    },
+    /// Return to a prior immutable policy.
+    Rollback {
+        policy: PolicyId,
+        #[arg(long)]
+        reason: String,
+        #[arg(long, default_value = "cli")]
+        actor: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyExperimentCommand {
+    Create {
+        proposal: PolicyProposalId,
+        #[arg(long, default_value_t = 50)]
+        candidate_share_percent: u32,
+        #[arg(long, default_value_t = 20)]
+        max_tasks: u32,
+        #[arg(long, default_value_t = 4)]
+        max_extra_runs: u32,
+        #[arg(long)]
+        max_extra_cost_usd: Option<f64>,
+        #[arg(long, value_parser = parse_datetime, value_name = "RFC3339")]
+        expires_at: Option<DateTime<Utc>>,
+    },
+    Show {
+        experiment: PolicyExperimentId,
+    },
+    Status {
+        experiment: PolicyExperimentId,
+        #[arg(value_parser = parse_policy_experiment_status)]
+        status: PolicyExperimentStatus,
     },
 }
 
@@ -543,6 +625,86 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
                 Ok(std::process::ExitCode::SUCCESS)
             }
         },
+        Command::Policy { command } => {
+            match command {
+                PolicyCommand::Show => commands::policy::show(cli.repo).await?,
+                PolicyCommand::History { limit } => {
+                    commands::policy::history(cli.repo, limit).await?
+                }
+                PolicyCommand::Propose {
+                    candidate,
+                    max_world_facts,
+                    timeout_secs,
+                    minimum_score_margin,
+                    learned_routing,
+                    cutoff,
+                } => {
+                    commands::policy::propose(
+                        cli.repo,
+                        commands::policy::ProposeArgs {
+                            candidate,
+                            max_world_facts,
+                            timeout_secs,
+                            minimum_score_margin,
+                            learned_routing,
+                            cutoff,
+                        },
+                    )
+                    .await?
+                }
+                PolicyCommand::Compare { proposal } => {
+                    commands::policy::compare(cli.repo, proposal).await?
+                }
+                PolicyCommand::Experiment { command } => match command {
+                    PolicyExperimentCommand::Create {
+                        proposal,
+                        candidate_share_percent,
+                        max_tasks,
+                        max_extra_runs,
+                        max_extra_cost_usd,
+                        expires_at,
+                    } => {
+                        commands::policy::experiment_create(
+                            cli.repo,
+                            proposal,
+                            candidate_share_percent,
+                            forge_core::ExperimentBudget {
+                                max_tasks,
+                                max_extra_runs,
+                                max_extra_cost_usd,
+                                expires_at,
+                            },
+                        )
+                        .await?
+                    }
+                    PolicyExperimentCommand::Show { experiment } => {
+                        commands::policy::experiment_show(cli.repo, experiment).await?
+                    }
+                    PolicyExperimentCommand::Status { experiment, status } => {
+                        commands::policy::experiment_status(cli.repo, experiment, status).await?
+                    }
+                },
+                PolicyCommand::Promote { proposal, actor } => {
+                    commands::policy::promote(cli.repo, proposal, actor).await?
+                }
+                PolicyCommand::Rollback {
+                    policy,
+                    reason,
+                    actor,
+                } => commands::policy::rollback(cli.repo, policy, reason, actor).await?,
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn parse_policy_experiment_status(raw: &str) -> Result<PolicyExperimentStatus, String> {
+    match raw.to_ascii_lowercase().replace('-', "_").as_str() {
+        "running" => Ok(PolicyExperimentStatus::Running),
+        "execution_complete" => Ok(PolicyExperimentStatus::ExecutionComplete),
+        "concluded" => Ok(PolicyExperimentStatus::Concluded),
+        "cancelled" | "canceled" => Ok(PolicyExperimentStatus::Cancelled),
+        _ => Err("expected running, execution-complete, concluded, or cancelled".into()),
     }
 }
 
@@ -609,6 +771,28 @@ mod tests {
             vec!["forge", "world", "query", "component", "storage"],
             vec!["forge", "world", "query", "dependencies", "storage"],
             vec!["forge", "world", "query", "failures", "scheduler"],
+            vec!["forge", "policy", "show"],
+            vec!["forge", "policy", "history"],
+            vec!["forge", "policy", "propose", "--max-world-facts", "8"],
+            vec!["forge", "policy", "compare", "PP-0001"],
+            vec!["forge", "policy", "experiment", "create", "PP-0001"],
+            vec![
+                "forge",
+                "policy",
+                "experiment",
+                "status",
+                "PX-0001",
+                "concluded",
+            ],
+            vec!["forge", "policy", "promote", "PP-0001"],
+            vec![
+                "forge",
+                "policy",
+                "rollback",
+                "P-0001",
+                "--reason",
+                "hard constraint regressed",
+            ],
             vec!["forge", "--repo", "/tmp/repo", "agent", "list"],
         ] {
             Cli::try_parse_from(&args).unwrap_or_else(|e| panic!("{args:?}: {e}"));

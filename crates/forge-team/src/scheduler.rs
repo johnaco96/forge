@@ -452,6 +452,7 @@ impl TeamCoordinator {
             .config
             .execution_provenance_for(selected_agent.as_str());
         run_request.selection_source = assignment.selection_source.clone();
+        run_request.manual_policy_override = Some("team execution".into());
         let report = match self.runner().execute(run_request, adapter.as_ref()).await {
             Ok(report) => report,
             Err(error) => {

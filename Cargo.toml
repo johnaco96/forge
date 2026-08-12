@@ -16,6 +16,7 @@ forge-core = { path = "crates/forge-core" }
 forge-agent = { path = "crates/forge-agent" }
 forge-git = { path = "crates/forge-git" }
 forge-health = { path = "crates/forge-health" }
+forge-policy = { path = "crates/forge-policy" }
 forge-executor = { path = "crates/forge-executor" }
 forge-eval = { path = "crates/forge-eval" }
 forge-runner = { path = "crates/forge-runner" }

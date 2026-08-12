@@ -46,7 +46,11 @@ use forge_core::experiment::{
 };
 use forge_core::ids::{AgentId, ExperimentId};
 use forge_core::integrity::EvaluationIntegrity;
+use forge_core::optimization::{
+    PolicyDecision, PolicyEvent, PolicyEventPayload, PolicyEventSubject, ShadowDecision,
+};
 use forge_core::patch::{PatchPolicy, PatchWarning};
+use forge_core::policy::{ExecutionStrategy, PolicyBounds};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{
     AgentExecution, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
@@ -61,6 +65,7 @@ use forge_executor::{
     EnvPolicy, ProcessRunner, WorkspaceProvider, WorktreeProvider, capture_candidate_patch,
 };
 use forge_git::Repository;
+use forge_policy::{ensure_bootstrap_policy, resolve_execution_policy};
 use forge_store::Store;
 
 pub mod error;
@@ -82,6 +87,8 @@ pub struct RunRequest {
     /// to unknown rather than guessing that a custom adapter is live.
     pub execution_provenance: ExecutionProvenance,
     pub selection_source: SelectionSource,
+    /// Exact user choice that policy routing must not replace.
+    pub manual_policy_override: Option<String>,
 }
 
 /// A base commit resolved by Forge before execution begins.
@@ -152,6 +159,7 @@ impl RunRequest {
             keep_workspace: None,
             execution_provenance: ExecutionProvenance::Unknown,
             selection_source: SelectionSource::Manual,
+            manual_policy_override: None,
         }
     }
 }
@@ -227,6 +235,12 @@ impl Runner {
         &self.store
     }
 
+    /// Ensures the repository has the behavior-preserving Phase 8 bootstrap
+    /// and returns the current immutable policy.
+    pub async fn ensure_active_policy(&self) -> RunnerResult<forge_core::EngineeringPolicy> {
+        Ok(ensure_bootstrap_policy(&self.store, &self.config).await?)
+    }
+
     /// Resolves a revision once into the immutable commit every participant
     /// must share.
     pub fn resolve_base(&self, revision: Option<&str>) -> RunnerResult<ResolvedBaseCommit> {
@@ -237,17 +251,28 @@ impl Runner {
 
     /// Builds the agent configuration a run will be recorded under.
     pub fn agent_config(&self, request: &RunRequest) -> RunnerResult<AgentConfig> {
+        self.agent_config_with_timeout_cap(request, None)
+    }
+
+    fn agent_config_with_timeout_cap(
+        &self,
+        request: &RunRequest,
+        policy_timeout_secs: Option<u64>,
+    ) -> RunnerResult<AgentConfig> {
         let settings = self.config.agent(&request.agent_id);
         let agent_id = AgentId::new(request.agent_id.clone())
             .map_err(|source| RunnerError::InvalidAgentId(source.to_string()))?;
 
         let mut config = AgentConfig::new(agent_id, harness_for(&request.agent_id));
         config.model = settings.model.clone();
+        let requested = request
+            .timeout
+            .map(|timeout| timeout.as_secs())
+            .unwrap_or_else(|| self.config.timeout_secs_for(&request.agent_id));
         config.timeout_secs = Some(
-            request
-                .timeout
-                .map(|t| t.as_secs())
-                .unwrap_or_else(|| self.config.timeout_secs_for(&request.agent_id)),
+            policy_timeout_secs
+                .map(|policy| requested.min(policy))
+                .unwrap_or(requested),
         );
         config.settings = settings.settings.clone();
         if let Some(executable) = &settings.executable {
@@ -346,6 +371,7 @@ impl Runner {
             run_request.selection_source = SelectionSource::Competition {
                 experiment_id: experiment_id.clone(),
             };
+            run_request.manual_policy_override = Some("competitive execution".into());
 
             let result = self
                 .execute_resolved(
@@ -432,17 +458,125 @@ impl Runner {
         experiment_sink: Option<&ExperimentRecordingSink>,
         base_was_dirty: bool,
     ) -> RunnerResult<RunReport> {
-        let agent_config = self.agent_config(&request)?;
+        let task_revision_id = self.store.upsert_task(&request.task).await?;
+        let policy = resolve_execution_policy(
+            &self.store,
+            &self.config,
+            &task_revision_id,
+            request.manual_policy_override.as_deref(),
+            chrono::Utc::now(),
+        )
+        .await?;
+        let bounds = PolicyBounds::for_config(&self.config);
+        policy
+            .selected
+            .validate(&bounds)
+            .map_err(|error| RunnerError::PolicyStrategy(error.to_string()))?;
+        if policy.source.policy_controlled_execution()
+            && policy.selected.execution == ExecutionStrategy::Team
+        {
+            return Err(RunnerError::PolicyStrategy(
+                "team policy requires the existing `forge team` path and a validated task plan"
+                    .into(),
+            ));
+        }
+
+        let agent_config = self.agent_config_with_timeout_cap(
+            &request,
+            Some(policy.selected.resources.timeout_secs),
+        )?;
         // Resolve trusted evaluation configuration before any candidate code
         // executes. The resulting plan is never rebuilt from the workspace.
         let evaluation_plan = EvaluationPlan::resolve(&request.task);
         let world_model = if self.config.world_model.enabled {
             self.store
-                .world_context_for_task(&request.task, base_commit.as_str(), 12)
+                .world_context_for_policy(
+                    &request.task,
+                    base_commit.as_str(),
+                    policy.selected.context.max_world_facts as usize,
+                    policy.selected.context.selection_strategy,
+                    policy.selected.context.include_failure_history,
+                )
                 .await?
         } else {
             None
         };
+        let health_snapshot_id = self
+            .store
+            .health_snapshot_for_commit(&request.task.repository, base_commit.as_str())
+            .await?
+            .map(|snapshot| snapshot.health_snapshot_id);
+        let decision_id = self.store.next_policy_decision_id().await?;
+        let mut explanation = policy.explanation.clone();
+        explanation.push(format!(
+            "executed agent `{}` with timeout cap {}s and {} context fact(s)",
+            request.agent_id,
+            policy.selected.resources.timeout_secs,
+            world_model
+                .as_ref()
+                .map(|context| context.facts.len())
+                .unwrap_or(0)
+        ));
+        if let SelectionSource::Automatic { decision_id, .. } = &request.selection_source {
+            explanation.push(format!("routing decision {decision_id} selected the agent"));
+        }
+        let decision = PolicyDecision {
+            decision_id: decision_id.clone(),
+            repository: request.task.repository.clone(),
+            created_at: chrono::Utc::now(),
+            task_revision_id: task_revision_id.clone(),
+            base_commit: Some(base_commit.as_str().to_string()),
+            active_policy_id: policy.active.policy_id.clone(),
+            selected_policy_id: policy.selected.policy_id.clone(),
+            policy_fingerprint: policy.selected.fingerprint(),
+            source: policy.source,
+            manual_override: request.manual_policy_override.clone(),
+            experiment: policy.experiment.clone(),
+            world_model_snapshot_id: world_model
+                .as_ref()
+                .map(|context| context.snapshot_id.clone()),
+            context_fact_ids: world_model
+                .as_ref()
+                .map(|context| {
+                    context
+                        .facts
+                        .iter()
+                        .map(|fact| fact.id.to_string())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            health_snapshot_id,
+            evidence_cutoff: None,
+            evidence_fingerprint: None,
+            optimizer_version: policy.selected.optimizer_version.clone(),
+            explanation,
+        };
+        self.store.insert_policy_decision(&decision).await?;
+        if let Some(shadow_policy) = self.store.shadow_policy(&request.task.repository).await? {
+            let shadow = ShadowDecision::new(
+                self.store.next_policy_decision_id().await?,
+                &request.task.repository,
+                task_revision_id.clone(),
+                shadow_policy.policy_id.clone(),
+                shadow_policy.fingerprint(),
+                policy.active.policy_id.clone(),
+                policy_selection_label(&policy.selected, &request.agent_id),
+                policy_selection_label(&shadow_policy, &request.agent_id),
+            );
+            self.store.insert_shadow_decision(&shadow).await?;
+            let subject = PolicyEventSubject::Policy(shadow_policy.policy_id.clone());
+            self.store
+                .append_policy_events(&[PolicyEvent {
+                    seq: self.store.next_policy_event_seq(&subject).await?,
+                    subject,
+                    timestamp: shadow.created_at,
+                    payload: PolicyEventPayload::ShadowDecisionRecorded {
+                        shadow_policy_id: shadow_policy.policy_id,
+                        agreed: shadow.agreed,
+                    },
+                }])
+                .await?;
+        }
         let run_id = self.store.next_run_id().await?;
 
         // --- From here on, every path persists a run. ---
@@ -460,10 +594,31 @@ impl Runner {
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());
 
-        let task_revision_id = self.store.upsert_task(&request.task).await?;
         self.store
             .save_run_at_task_revision(&run, experiment_id, &task_revision_id)
             .await?;
+        self.store
+            .link_run_to_policy(
+                &run_id,
+                &policy.selected.policy_id,
+                &decision.policy_fingerprint,
+                &decision_id,
+            )
+            .await?;
+        if let Some(membership) = &policy.experiment {
+            let subject = PolicyEventSubject::Experiment(membership.experiment_id.clone());
+            self.store
+                .append_policy_events(&[PolicyEvent {
+                    seq: self.store.next_policy_event_seq(&subject).await?,
+                    subject,
+                    timestamp: decision.created_at,
+                    payload: PolicyEventPayload::PolicyExperimentAssigned {
+                        task_revision_id: task_revision_id.clone(),
+                        arm: membership.arm,
+                    },
+                }])
+                .await?;
+        }
 
         if let Some(experiment_sink) = experiment_sink {
             experiment_sink.emit(ExperimentEventPayload::ParticipantRunStarted {
@@ -506,6 +661,8 @@ impl Runner {
                 }
                 run.outcome = Some(RunOutcome::Errored);
                 self.persist(&run, None, &sink, experiment_id).await?;
+                self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
+                    .await?;
                 return Ok(self.report(run, None, None, false, base_was_dirty, &sink));
             }
         };
@@ -529,6 +686,8 @@ impl Runner {
         }
 
         self.persist(&run, evaluation.as_ref(), &sink, experiment_id)
+            .await?;
+        self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
             .await?;
 
         Ok(self.report(
@@ -722,6 +881,32 @@ impl Runner {
         Ok(())
     }
 
+    async fn record_policy_experiment_observation(
+        &self,
+        run: &AgentRun,
+        membership: Option<&forge_core::ExperimentMembership>,
+    ) -> RunnerResult<()> {
+        let Some(membership) = membership else {
+            return Ok(());
+        };
+        self.store
+            .record_experiment_observation(&membership.experiment_id, &run.run_id, membership.arm)
+            .await?;
+        let subject = PolicyEventSubject::Experiment(membership.experiment_id.clone());
+        self.store
+            .append_policy_events(&[PolicyEvent {
+                seq: self.store.next_policy_event_seq(&subject).await?,
+                subject,
+                timestamp: run.finished_at.unwrap_or_else(chrono::Utc::now),
+                payload: PolicyEventPayload::PolicyExperimentObservationAdded {
+                    run_id: run.run_id.clone(),
+                    arm: membership.arm,
+                },
+            }])
+            .await?;
+        Ok(())
+    }
+
     fn report(
         &self,
         run: AgentRun,
@@ -757,6 +942,26 @@ fn harness_for(agent_id: &str) -> String {
         other => other,
     }
     .to_string()
+}
+
+fn policy_selection_label(policy: &forge_core::EngineeringPolicy, actual_agent: &str) -> String {
+    format!(
+        "agent={} routing={} execution={} context={} max_facts={} timeout={}s",
+        if policy.routing.use_learned_routing {
+            "learned"
+        } else {
+            actual_agent
+        },
+        if policy.routing.use_learned_routing {
+            "learned"
+        } else {
+            "configured"
+        },
+        policy.execution.as_str(),
+        policy.context.selection_strategy.as_str(),
+        policy.context.max_world_facts,
+        policy.resources.timeout_secs,
+    )
 }
 
 /// Summarizes an evaluation for display, preserving per-check detail.

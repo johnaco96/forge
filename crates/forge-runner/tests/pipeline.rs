@@ -16,8 +16,9 @@ use forge_agent::error::{AgentError, AgentResult};
 use forge_core::agent::{AdapterStatus, AgentDescriptor};
 use forge_core::config::ForgeConfig;
 use forge_core::events::EventPayload;
-use forge_core::ids::{AgentId, TaskId, WorldModelFactId, WorldModelSnapshotId};
+use forge_core::ids::{AgentId, PolicyId, TaskId, WorldModelFactId, WorldModelSnapshotId};
 use forge_core::integrity::ProtectionPolicy;
+use forge_core::policy::{PolicyProvenance, PolicyStatus};
 use forge_core::result::{EvaluatorKind, Verdict};
 use forge_core::run::{
     AgentExecution, AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus,
@@ -353,6 +354,23 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     assert_eq!(stored.outcome, Some(RunOutcome::Passed));
     assert_eq!(stored.execution_provenance, ExecutionProvenance::Synthetic);
     assert_eq!(stored.selection_source, SelectionSource::Manual);
+    let (policy_id, fingerprint, decision_id) = store
+        .run_policy_link(&report.run.run_id)
+        .await
+        .unwrap()
+        .expect("Phase 8 run policy link");
+    let decision = store
+        .policy_decision_by_id(&decision_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        decision.source,
+        forge_core::PolicySelectionSource::ActivePolicy
+    );
+    assert_eq!(decision.selected_policy_id, policy_id);
+    assert_eq!(decision.policy_fingerprint, fingerprint);
+    assert!(decision.manual_override.is_none());
     let evaluation = store
         .load_evaluation(&report.run.run_id)
         .await
@@ -375,6 +393,100 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
     ] {
         assert!(types.contains(&required), "missing {required} in {types:?}");
     }
+}
+
+#[tokio::test]
+async fn an_explicit_agent_override_wins_and_remains_distinct_policy_evidence() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let agent = edits("value.txt", "2\n");
+    let mut request = RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude");
+    request.execution_provenance = ExecutionProvenance::Synthetic;
+    request.manual_policy_override = Some("agent=claude".into());
+
+    let report = runner.execute(request, &agent).await.unwrap();
+    let (_, _, decision_id) = runner
+        .store()
+        .run_policy_link(&report.run.run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let decision = runner
+        .store()
+        .policy_decision_by_id(&decision_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        decision.source,
+        forge_core::PolicySelectionSource::ManualOverride
+    );
+    assert_eq!(decision.manual_override.as_deref(), Some("agent=claude"));
+
+    let active = runner
+        .store()
+        .active_policy("distributed-runtime")
+        .await
+        .unwrap()
+        .unwrap();
+    let candidate = active.clone();
+    let resolved = forge_policy::PolicyEvidenceResolver::new(runner.store().clone())
+        .with_allowed_provenance([ExecutionProvenance::Synthetic])
+        .resolve(&active, &candidate, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert!(resolved.snapshot.eligible.is_empty());
+    assert!(resolved.snapshot.excluded.iter().any(|excluded| {
+        excluded.run_id == report.run.run_id
+            && matches!(
+                excluded.exclusion,
+                forge_core::EvidenceExclusion::ManualOverride
+            )
+    }));
+}
+
+#[tokio::test]
+async fn a_shadow_policy_records_only_its_unexecuted_choice() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let active = runner.ensure_active_policy().await.unwrap();
+    let mut shadow = active.clone();
+    shadow.policy_id = PolicyId::sequential(2);
+    shadow.parent_policy_id = Some(active.policy_id.clone());
+    shadow.status = PolicyStatus::Shadow;
+    shadow.provenance = PolicyProvenance::OptimizerProposed;
+    shadow.routing.use_learned_routing = true;
+    shadow.created_at = chrono::Utc::now();
+    runner.store().insert_policy(&shadow).await.unwrap();
+
+    let mut request = RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude");
+    request.execution_provenance = ExecutionProvenance::Synthetic;
+    let report = runner
+        .execute(request, &edits("value.txt", "2\n"))
+        .await
+        .unwrap();
+    assert_eq!(report.outcome(), RunOutcome::Passed);
+
+    let shadows = runner
+        .store()
+        .shadow_decisions("distributed-runtime", 10)
+        .await
+        .unwrap();
+    assert_eq!(shadows.len(), 1);
+    assert_eq!(shadows[0].shadow_policy_id, shadow.policy_id);
+
+    let resolved = forge_policy::PolicyEvidenceResolver::new(runner.store().clone())
+        .with_allowed_provenance([ExecutionProvenance::Synthetic])
+        .resolve(&active, &shadow, chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        resolved
+            .snapshot
+            .observations_for(&shadow.fingerprint())
+            .len(),
+        0
+    );
 }
 
 #[tokio::test]
@@ -1317,5 +1429,6 @@ async fn the_configured_timeout_reaches_the_run_record() {
     request.timeout = Some(Duration::from_secs(120));
 
     let report = runner.execute(request, &agent).await.unwrap();
-    assert_eq!(report.run.agent.timeout_secs, Some(120));
+    // The explicit request may shorten the configured hard limit, not raise it.
+    assert_eq!(report.run.agent.timeout_secs, Some(60));
 }

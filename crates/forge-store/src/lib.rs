@@ -11,6 +11,7 @@
 pub mod error;
 pub mod experience;
 pub mod health;
+pub mod policy;
 pub mod routing;
 pub mod sqlite;
 pub mod team;
@@ -24,5 +25,6 @@ pub use experience::{
 };
 pub use forge_core::task::TaskRevisionId;
 pub use health::{HealthRunEvidence, PatchFacts};
+pub use policy::{PolicyHistoryEntry, PolicyRunEvidence, PolicyRunEvidenceSet};
 pub use sqlite::{RunSummary, Store};
 pub use world::WorldModelQuery;

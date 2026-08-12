@@ -10,8 +10,8 @@ use forge_core::agent::AdapterStatus;
 use forge_core::config::{ForgeConfig, Layout};
 use forge_core::result::Verdict;
 use forge_core::routing::{
-    CandidateAgentSet, MinimumRoutingEvidence, RoutingDecision, RoutingEvidencePolicy,
-    RoutingRequest,
+    CandidateAgentSet, EvidencePolicyVersion, MinimumRoutingEvidence, RoutingDecision,
+    RoutingEvidencePolicy, RoutingRequest,
 };
 use forge_core::run::{PatchSummary, RunOutcome, SelectionSource};
 use forge_core::task::{EngineeringTask, TaskRevision};
@@ -53,23 +53,24 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     let task = EngineeringTask::load(&args.task_path)?;
     task.validate()?;
 
-    let agent_id = args
-        .agent
-        .clone()
-        .or_else(|| config.defaults.agent.clone())
-        .ok_or_else(|| {
+    let explicit_agent = args.agent.is_some();
+    let store = Store::open(layout.store_path(&config))
+        .await
+        .with_context(|| format!("opening the ledger at {}", config.store.path))?;
+    let runner = Runner::new(repository, config.clone(), store.clone());
+    let active_policy = runner.ensure_active_policy().await?;
+    let agent_id = match args.agent.clone() {
+        Some(agent) => agent,
+        None if active_policy.routing.use_learned_routing => "auto".into(),
+        None => config.defaults.agent.clone().ok_or_else(|| {
             anyhow!("no agent specified and no `defaults.agent` configured; pass --agent <name>")
-        })?;
+        })?,
+    };
 
     let registry = AgentRegistry::builtin();
     if agent_id != "auto" && registry.get(&agent_id).is_none() {
         bail!("unknown agent `{agent_id}`; run `forge agent list` to see the available agents");
     }
-
-    let store = Store::open(layout.store_path(&config))
-        .await
-        .with_context(|| format!("opening the ledger at {}", config.store.path))?;
-    let runner = Runner::new(repository, config.clone(), store.clone());
 
     if agent_id == "auto" {
         return run_auto(args, task, registry, runner, store, &layout, &config).await;
@@ -78,6 +79,9 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     let mut request = RunRequest::new(task.clone(), &agent_id);
     request.execution_provenance = config.execution_provenance_for(&agent_id);
     request.selection_source = SelectionSource::Manual;
+    if explicit_agent {
+        request.manual_policy_override = Some(format!("agent={agent_id}"));
+    }
     request.base_rev = args.base.clone();
     request.timeout = args.timeout_secs.map(Duration::from_secs);
     if args.keep_workspace {
@@ -108,6 +112,7 @@ async fn run_auto(
     layout: &Layout,
     config: &ForgeConfig,
 ) -> Result<RunExit> {
+    let active_policy = runner.ensure_active_policy().await?;
     let mut requested = Vec::new();
     for descriptor in registry
         .descriptors()
@@ -142,15 +147,19 @@ async fn run_auto(
     if persisted_revision != *task_revision.revision_id() {
         bail!("the persisted task revision differs from the routing snapshot");
     }
+    let evidence_policy = RoutingEvidencePolicy {
+        version: EvidencePolicyVersion(active_policy.routing.evidence_policy_version.clone()),
+        ..RoutingEvidencePolicy::default()
+    };
     let request = RoutingRequest::new(
         task_revision,
         candidates,
-        RoutingEvidencePolicy::default(),
+        evidence_policy,
         MinimumRoutingEvidence {
-            total: config.routing.minimum_total_evidence,
-            per_agent: config.routing.minimum_agent_evidence,
+            total: active_policy.routing.minimum_total_evidence,
+            per_agent: active_policy.routing.minimum_agent_evidence,
         },
-        config.routing.exploration_policy,
+        active_policy.exploration.policy,
         Utc::now(),
     );
     let resolved_base = runner.resolve_base(args.base.as_deref())?;
@@ -162,8 +171,13 @@ async fn run_auto(
     } else {
         None
     };
+    let mut routing_config = config.routing.clone();
+    routing_config.minimum_total_evidence = active_policy.routing.minimum_total_evidence;
+    routing_config.minimum_agent_evidence = active_policy.routing.minimum_agent_evidence;
+    routing_config.minimum_score_margin = active_policy.routing.minimum_score_margin;
+    routing_config.exploration_policy = active_policy.exploration.policy;
     let record = RoutingContract::new(store.clone())
-        .route_with_world_model(&request, &config.routing, world_model_snapshot_id)
+        .route_with_world_model(&request, &routing_config, world_model_snapshot_id)
         .await?;
     print_routing(&record, &args.task_path);
 
@@ -181,6 +195,9 @@ async fn run_auto(
         router_version: ROUTER_VERSION.into(),
         evidence_fingerprint: record.evidence_fingerprint.clone(),
     };
+    if args.agent.is_some() {
+        run_request.manual_policy_override = Some("agent=auto".into());
+    }
     run_request.base_rev = Some(resolved_base.as_str().into());
     run_request.timeout = args.timeout_secs.map(Duration::from_secs);
     if args.keep_workspace {

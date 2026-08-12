@@ -24,7 +24,9 @@ pub mod experiment;
 pub mod health;
 pub mod ids;
 pub mod integrity;
+pub mod optimization;
 pub mod patch;
+pub mod policy;
 pub mod result;
 pub mod routing;
 pub mod run;
@@ -60,9 +62,25 @@ pub use ids::{
 pub use integrity::{
     CompiledProtection, EvaluationIntegrity, IntegrityStatus, ProtectionError, ProtectionPolicy,
 };
+pub use optimization::{
+    AssignmentRule, ConstraintResult, EvidenceExclusion, EvidenceStrength, ExcludedObservation,
+    ExperimentArm, ExperimentAssignment, ExperimentBudget, ExperimentMembership, HealthEvidenceRef,
+    ObjectiveOutcome, ObservationSource, PolicyDecision, PolicyEvent, PolicyEventPayload,
+    PolicyEventSubject, PolicyEvidenceSnapshot, PolicyExperiment, PolicyExperimentStatus,
+    PolicyObservation, PolicyOutcomeSummary, PolicyProposal, PolicySelectionSource,
+    ProposalRecommendation, ShadowDecision,
+};
 pub use patch::{
     CandidatePatch, ChangeKind, DeltaEntry, ExcludedEntry, ExclusionReason, PatchPolicy,
     PatchWarning, WarningKind, WorkspaceDelta,
+};
+pub use policy::{
+    ApprovalRequirement, ContextPolicy, ContextSelectionStrategy, EngineeringPolicy,
+    ExecutionStrategy, ExplorationPolicySettings, FixedGuardrail, GuardrailSet, MinimumEvidence,
+    ObjectiveConstraint, ObjectiveKind, ObjectiveMetric, ObjectiveTerm, OptimizableDimension,
+    OptimizationObjective, PolicyBounds, PolicyComparison, PolicyError, PolicyProvenance,
+    PolicyStatus, ResourcePolicy, ReviewPolicy, RoutingPolicySettings, TeamPlanTemplate,
+    TeamPolicySettings,
 };
 pub use result::{
     BenchmarkMetrics, CheckResult, Dimension, Direction, Evaluation, EvaluationSummary,

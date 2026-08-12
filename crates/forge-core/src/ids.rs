@@ -170,6 +170,26 @@ define_id!(
     "H"
 );
 define_id!(
+    /// Identifies one immutable engineering policy, e.g. `P-0004`.
+    PolicyId,
+    "P"
+);
+define_id!(
+    /// Identifies one optimizer proposal, e.g. `PP-0012`.
+    PolicyProposalId,
+    "PP"
+);
+define_id!(
+    /// Identifies one controlled policy experiment, e.g. `PX-0001`.
+    PolicyExperimentId,
+    "PX"
+);
+define_id!(
+    /// Identifies one durable policy/strategy decision, e.g. `PD-0031`.
+    PolicyDecisionId,
+    "PD"
+);
+define_id!(
     /// Identifies an agent as Forge knows it, e.g. `claude` or `codex`.
     AgentId,
     "A"

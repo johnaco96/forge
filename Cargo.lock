@@ -446,12 +446,14 @@ dependencies = [
  "forge-executor",
  "forge-git",
  "forge-health",
+ "forge-policy",
  "forge-router",
  "forge-runner",
  "forge-store",
  "forge-team",
  "forge-world",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tracing",
@@ -528,6 +530,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "forge-policy"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "forge-core",
+ "forge-store",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "forge-router"
 version = "0.1.0"
 dependencies = [
@@ -549,6 +564,7 @@ dependencies = [
  "forge-eval",
  "forge-executor",
  "forge-git",
+ "forge-policy",
  "forge-store",
  "tempfile",
  "thiserror",
