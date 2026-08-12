@@ -1,0 +1,42 @@
+task_id: T-VAL-012
+repository: forge
+objective: >-
+  Phase 8's execution integration hands the caller a resolution describing which
+  policy governs a task, and separately expects the caller to persist the
+  resulting decision and link it to the run once the run id exists. Nothing in
+  the type system requires the second half to happen. A caller that resolves a
+  policy and forgets to persist the decision produces a run that silently looks
+  like a Phase 0–7 execution — no policy attribution, no decision record — which
+  is exactly the state the nullable columns are meant to represent honestly for
+  historical runs. The gap between "no policy governed this" and "a policy
+  governed this and we failed to write it down" is invisible after the fact.
+  Make that contract harder to get wrong, so that resolving a policy and
+  recording what it decided cannot drift apart.
+constraints:
+  - The optimizer must remain a pure function of supplied evidence; do not give it store access
+  - Explicit user overrides must remain authoritative and must stay recorded as overrides
+  - Historical runs must continue to carry no policy attribution
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: refactor
+  language: rust
+  domain: policy
+  difficulty: hard
+components:
+  - forge-policy
+  - forge-cli
+tags:
+  - validation-campaign
+  - campaign-v1
+  - team-candidate
+  - policy-evidence
+  - context-experiment

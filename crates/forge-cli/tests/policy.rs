@@ -256,6 +256,7 @@ async fn add_policy_observation(
         binary_files: 0,
         diff_path: None,
         excluded: Vec::new(),
+        excluded_counts: Default::default(),
     });
     run.integrity = Some(EvaluationIntegrity::unchecked());
     run.outcome = Some(RunOutcome::Passed);

@@ -1,0 +1,40 @@
+task_id: T-VAL-008
+repository: forge
+objective: >-
+  `ExportRecord` is the analysis substrate: it carries the run, task revision,
+  agent config, execution provenance, selection source, outcome, integrity,
+  full evaluation, timings, usage, and patch stats. Phase 8 added three columns
+  to `runs` — `policy_id`, `policy_fingerprint`, `policy_decision_id` — and the
+  export does not include any of them. That means the exported record cannot
+  answer which policy governed a run, so no offline analysis can compare
+  outcomes across policies, which is precisely what the policy machinery exists
+  to enable. Carry the policy linkage into the exported record, additively, so
+  that a reader of an older export is unaffected and a reader of a new export
+  can attribute every run to the policy that governed it or see explicitly that
+  none did.
+constraints:
+  - Historical runs that no policy governed must export as absent, never as a default or empty string
+  - The change must be additive; existing consumers of schema version 1 must keep working
+  - Bump the export schema version to reflect the new shape
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-policy/tests/**
+classification:
+  category: feature
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+  - forge-cli
+tags:
+  - validation-campaign
+  - campaign-v1
+  - policy-evidence

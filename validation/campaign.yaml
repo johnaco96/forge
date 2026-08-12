@@ -1,0 +1,233 @@
+# Forge validation campaign manifest.
+#
+# This is a campaign definition, not a Forge task file. Forge's own schema has
+# no campaign concept and this file deliberately does not invent one inside the
+# core: it is read by validation/scripts/*, which drive the ordinary Forge CLI.
+# Nothing here changes how Forge behaves.
+
+campaign_id: forge-v1-2026-08
+campaign_version: 2
+registered: 2026-08-12
+status: awaiting-baseline-freeze
+
+repository: forge
+
+# NOT YET FROZEN. Fill both fields only after the validation-hardening release is
+# reviewed and tagged, then never change them for this campaign.
+#
+# The campaign deliberately does NOT run from v1.0.0 / c566354. That baseline
+# contains the campaign-blocking patch-capture defect (F-003): an agent that
+# compiles the project cannot have its patch captured at all, so every task would
+# have recorded an infrastructure error instead of a result. Two of the three
+# dogfood runs failed exactly that way.
+baseline_commit: null
+baseline_tag: null
+baseline_intended: v1.0.1
+baseline_frozen: false
+
+# Every Tier 1 run starts from the frozen baseline. Both agents must use the same
+# one, or the pair is not a pair.
+base_rev: null
+
+agents:
+  - id: claude
+    role: primary
+    available: true
+    adapter: claude-code
+  - id: codex
+    role: primary
+    available: false
+    adapter: codex-cli
+    # Adapter stays configured while the binary is absent. Absence is a fact
+    # about this machine, not a reason to remove the agent from the campaign.
+    blocked_reason: "codex binary not on PATH as of the baseline"
+
+# How participants are physically separated during a formal run.
+#
+# Forge's ordinary execution uses Git worktrees, which is the right mechanism
+# for ordinary use. It is not sufficient for a controlled experiment: sibling
+# worktrees share one object database and one ref namespace, so whichever
+# participant runs second can read the first one's finished candidate by branch
+# name or by raw object id. The campaign therefore gives each participant its
+# own repository. This is campaign infrastructure, not a change to how Forge
+# executes anything.
+isolation:
+  strategy: independent-clone-v1
+  mechanism: >-
+    git clone --no-local --single-branch --no-tags from the frozen baseline,
+    detached at the pinned commit, with the remote removed afterwards.
+    `--no-local` is load-bearing: a local clone copies the whole object
+    directory instead of negotiating a pack, so `--single-branch` alone filters
+    refs while leaving every object reachable by id.
+  verified_by: validation/scripts/test-isolation.sh
+  invariants:
+    - no object alternates
+    - own .git directory, not a shared gitdir
+    - no remote after materialization
+    - HEAD equals the pinned baseline commit
+    - clean tree at handover
+    - no forge/* candidate refs resolvable
+    - private validation archive absent
+  residual: >-
+    Forge's own worktrees still share an object store. This strategy protects
+    the formal experiment; it does not claim worktrees are hardened against a
+    hostile participant.
+
+execution_modes:
+  - id: paired-independent-clone
+    command: forge run <task> --agent <agent> --base <baseline>, once per participant clone
+    required: true
+    blocked_on: codex
+    note: >-
+      Tier 1. Replaces `forge compete` for formal runs. Competition ran both
+      participants in one repository, which is exactly the isolation flaw. The
+      pairing rule is unchanged — same task revision, same base commit — and is
+      now enforced by pinning `--base` rather than by sharing a parent repo.
+  - id: single-agent-dogfood
+    command: forge run <task> --agent claude
+    required: false
+    note: >-
+      Pre-campaign Claude-only dogfooding. Real evidence, but never a substitute
+      for a pair. Capped at 5 runs.
+  - id: routing
+    command: forge run <task> --agent auto
+    required: false
+    note: Evaluated retrospectively from the ledger, not by re-running.
+  - id: team
+    command: forge team <task>
+    required: false
+    note: Only for tasks tagged team-candidate.
+
+repetition:
+  tier_1:
+    runs_per_agent: 1
+    tasks: all
+    required: true
+  tier_2:
+    runs_per_agent: 3
+    tasks: [T-VAL-001, T-VAL-021, T-VAL-009, T-VAL-013, T-VAL-016]
+    required: false
+    budget_gated: true
+    note: >-
+      Estimates within-agent variance so Tier 1 differences can be read against
+      it. Not run without an explicit decision; triples spend.
+
+# Deterministic seed for the coin-flip routing baseline. Fixed now so the
+# baseline cannot be re-seeded after seeing results.
+routing_baseline_seed: "forge-v1-2026-08"
+
+metrics:
+  primary:
+    - name: outcome
+      source: ledger
+      note: Forge's own verdict. PASS means outcome == passed.
+  secondary:
+    - name: agent_runtime_ms
+      direction: minimize
+    - name: provider_reported_total_tokens
+      direction: minimize
+      note: Only where the provider reported it; absent is unknown, not zero.
+    - name: known_cost_usd
+      direction: minimize
+      note: Only where known. Never imputed.
+    - name: patch_lines_changed
+      direction: neutral
+      note: Reported as a distribution. Never a tiebreaker.
+    - name: integrity_violations
+      direction: minimize
+  per_task:
+    note: >-
+      Benchmark and complexity metrics are declared by each task's own
+      evaluation block and carry their own direction. See the task files.
+
+analysis:
+  plan: validation/analysis-plan.md
+  pre_registered: true
+  export_command: forge export --format jsonl
+  note: >-
+    Every statistic is computed from the exported ledger. No number originates
+    outside it.
+
+health_checkpoints:
+  - id: baseline
+    at: null            # the frozen campaign baseline, once tagged
+    built: false
+  - id: dogfood-5
+    after: ~5 accepted dogfood changes
+    built: false
+  - id: campaign-10
+    after: ~10 accepted campaign changes
+    built: false
+  - id: campaign-20
+    after: campaign conclusion
+    built: false
+
+policy:
+  control_during_tier_1: false
+  note: >-
+    Phase 8 does not govern the campaign that produces its evidence. The
+    bootstrap policy reproduces existing behaviour; proposals are built
+    afterwards from persisted evidence.
+  permitted_experiment_knobs:
+    - context.max_world_facts
+    - routing.minimum_score_margin
+    - resources.timeout_secs
+  forbidden:
+    note: >-
+      Trust-boundary settings are FixedGuardrails and have no policy field at
+      all. This list is documentation, not enforcement — the enforcement is
+      structural.
+
+tasks:
+  - { id: T-VAL-001, category: debugging,   difficulty: medium, file: tasks/T-VAL-001.yaml }
+  - { id: T-VAL-002, category: debugging,   difficulty: small,  file: tasks/T-VAL-002.yaml }
+  - { id: T-VAL-003, category: debugging,   difficulty: medium, file: tasks/T-VAL-003.yaml }
+  - { id: T-VAL-004, category: debugging,   difficulty: medium, file: tasks/T-VAL-004.yaml }
+  - { id: T-VAL-006, category: feature,     difficulty: medium, file: tasks/T-VAL-006.yaml }
+  - { id: T-VAL-008, category: feature,     difficulty: medium, file: tasks/T-VAL-008.yaml }
+  - { id: T-VAL-021, category: feature,     difficulty: small,  file: tasks/T-VAL-021.yaml }
+  - { id: T-VAL-022, category: feature,     difficulty: medium, file: tasks/T-VAL-022.yaml }
+  - { id: T-VAL-009, category: refactor,    difficulty: medium, file: tasks/T-VAL-009.yaml }
+  - { id: T-VAL-010, category: refactor,    difficulty: medium, file: tasks/T-VAL-010.yaml }
+  - { id: T-VAL-012, category: refactor,    difficulty: hard,   file: tasks/T-VAL-012.yaml }
+  - { id: T-VAL-023, category: refactor,    difficulty: small,  file: tasks/T-VAL-023.yaml }
+  - { id: T-VAL-013, category: testing,     difficulty: medium, file: tasks/T-VAL-013.yaml }
+  - { id: T-VAL-014, category: testing,     difficulty: hard,   file: tasks/T-VAL-014.yaml }
+  - { id: T-VAL-015, category: testing,     difficulty: medium, file: tasks/T-VAL-015.yaml }
+  - { id: T-VAL-016, category: performance, difficulty: medium, file: tasks/T-VAL-016.yaml }
+  - { id: T-VAL-017, category: performance, difficulty: small,  file: tasks/T-VAL-017.yaml }
+  - { id: T-VAL-018, category: performance, difficulty: medium, file: tasks/T-VAL-018.yaml }
+  - { id: T-VAL-019, category: persistence, difficulty: medium, file: tasks/T-VAL-019.yaml }
+  - { id: T-VAL-020, category: persistence, difficulty: hard,   file: tasks/T-VAL-020.yaml }
+
+provenance:
+  authored_by: campaign preparation, 2026-08-12
+  revised: >-
+    2026-08-12 validation hardening. Three tasks Claude had already attempted
+    during dogfooding (T-VAL-005, T-VAL-007, T-VAL-011) were retired and replaced
+    by T-VAL-021, T-VAL-022, T-VAL-023 so no formal task carries prior exposure.
+    Category distribution is unchanged.
+  authored_against: c566354a0ef023b55f91553c397c5d7f19dd22b1
+  isolation_amendment: >-
+    2026-08-12. Formal participants moved from sibling Git worktrees to
+    independent clones (independent-clone-v1) after cross-participant object and
+    ref visibility was reproduced. Infrastructure only; no analysis rule changed.
+    No formal Claude-vs-Codex result existed at the time of the change.
+  retired_tasks:
+    - id: T-VAL-005
+      reason: attempted by Claude as run R-0001 during dogfooding
+      replaced_by: T-VAL-021
+    - id: T-VAL-007
+      reason: attempted by Claude as run R-0002 during dogfooding
+      replaced_by: T-VAL-022
+    - id: T-VAL-011
+      reason: attempted and passed by Claude as run R-0003 during dogfooding
+      replaced_by: T-VAL-023
+  task_selection_method: >-
+    Direct inspection of the Forge codebase at the baseline commit. Every task
+    describes a condition observed in the source, not a hypothetical. Tasks
+    state the desired outcome and never the intended patch.
+  known_bias: >-
+    The corpus is what one reviewer noticed while reading the code. It is real
+    work, but it is not a random sample of engineering work, and results do not
+    generalise beyond this distribution.

@@ -1,0 +1,46 @@
+task_id: T-VAL-019
+repository: forge
+objective: >-
+  Phase 8's evidence path orders and filters runs by
+  `COALESCE(finished_at, created_at)` — the instant a run's evidence actually
+  became available, which is the correct key for reconstructing what was knowable
+  at a historical cutoff. No index covers that expression. `runs_history_idx`
+  covers `(created_at DESC, run_id DESC)` and cannot serve an ordering over a
+  different expression, so every policy evidence resolution sorts the runs table
+  from scratch, three times: once for the available window, once for the
+  post-cutoff set, and once for the beyond-limit set. This is the query that
+  runs every time a proposal is built or reproduced, and it is the one whose
+  cost grows fastest with ledger size. Give the evidence-availability ordering
+  index support, in a migration, without disturbing the existing indexes or the
+  historical rows.
+constraints:
+  - Add a migration; do not edit an existing migration file
+  - Evidence selection results and ordering must be unchanged, including tie-breaking
+  - Existing ledgers must migrate cleanly and keep every historical row untouched
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: existing_migrations_untouched
+      command: >-
+        echo "048c7468c961acfdb36a8eb0069d201832e5a92c2ead9e330bc379032c0ffab6  crates/forge-store/migrations/0001_init.sql" > /tmp/forge-mig.sha;
+        echo "978d85de0fbc01d7c22b70ab6b2f99d39319cc03617b294c3ba04645cd803b65  crates/forge-store/migrations/0012_engineering_policy.sql" >> /tmp/forge-mig.sha;
+        shasum -a 256 -c /tmp/forge-mig.sha
+      timeout_secs: 300
+protected_paths:
+  - validation/**
+classification:
+  category: persistence
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - policy-evidence

@@ -24,7 +24,7 @@ use forge_core::team::{
 };
 use forge_core::workspace::{Workspace, WorkspaceKind};
 use forge_eval::{EvalContext, EvaluationEngine, EvaluationPlan};
-use forge_executor::{EnvPolicy, ProcessRunner};
+use forge_executor::{EnvPolicy, ProcessRunner, RETAINED_IGNORED_EXCLUSIONS};
 use forge_git::{
     Repository, WorktreeManager, cached_patch, stage_candidate_patch, workspace_delta,
 };
@@ -990,7 +990,10 @@ impl TeamCoordinator {
                 deletions: candidate.deletions(),
                 binary_files: candidate.binary_files(),
                 diff_path: Some(diff_path),
-                excluded: candidate.excluded.clone(),
+                // Same retention as an ordinary run: a team's integration
+                // workspace accumulates the same build output.
+                excluded: candidate.retained_exclusions(RETAINED_IGNORED_EXCLUSIONS),
+                excluded_counts: candidate.exclusion_counts(),
             };
             let integrity = task.protection.check(&delta)?;
             let plan = EvaluationPlan::resolve(task);
@@ -1833,6 +1836,7 @@ mod tests {
                 binary_files: 0,
                 diff_path: None,
                 excluded: Vec::new(),
+                excluded_counts: Default::default(),
             },
             lineage: vec!["candidate".into()],
         });

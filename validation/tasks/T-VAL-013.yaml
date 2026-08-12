@@ -1,0 +1,44 @@
+task_id: T-VAL-013
+repository: forge
+objective: >-
+  Every durable id in Forge — runs, experiments, routing decisions, policies,
+  proposals, decisions, health snapshots, world models — is allocated from a
+  shared counters table, and the whole ledger's story depends on those ids never
+  colliding and never being reused. The allocation is written as a single
+  upsert-returning statement, which should be atomic, and the pool allows
+  several connections. That property is currently asserted by nobody: there is
+  no test in which concurrent writers race for ids and the result is checked.
+  The cost of being wrong is silent and permanent — two runs sharing an id
+  corrupts history in a way no later migration can repair. Establish the
+  invariant as a test: under genuine concurrency, allocated ids must be unique,
+  monotonic, and never reused after a failure or rollback.
+constraints:
+  - The test must exercise real concurrency against a real pooled connection, not a mocked sequence
+  - It must be deterministic in its assertions and must not be flaky under load
+  - Do not weaken or restructure the allocation mechanism to make it easier to test
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: store_coverage_increased
+      command: >-
+        n=$(cargo test -p forge-store 2>&1 | grep -E '^test result' | awk '{s+=$4} END {print s+0}');
+        echo "forge-store tests: $n"; test "$n" -gt 42
+      timeout_secs: 1800
+protected_paths:
+  - validation/**
+classification:
+  category: testing
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - tier2-repetition

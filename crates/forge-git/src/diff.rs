@@ -208,7 +208,24 @@ fn validate_git_path(path: &str) -> GitResult<()> {
     Ok(())
 }
 
+/// Total bytes of path arguments one `git` invocation may carry.
+///
+/// `execve` fails with `E2BIG` once the argument vector exceeds the platform
+/// limit — roughly 1 MiB on macOS. This is not a pathological case: an agent
+/// that compiles the project it is working on leaves tens of thousands of
+/// ignored build artifacts in the workspace, every one of which is an excluded
+/// path, so an ordinary Rust task overflows the limit and the patch can never
+/// be captured. The bound is deliberately far below the platform maximum,
+/// because the real limit counts the environment block too.
+const MAX_RESET_ARG_BYTES: usize = 96 * 1024;
+/// Independent ceiling on argument count, for platforms that limit that instead.
+const MAX_RESET_ARG_COUNT: usize = 1_000;
+
 /// Leaves only policy-approved changes in the workspace index.
+///
+/// Excluded paths are reset in batches. Resetting a path to `base` is
+/// idempotent and independent of every other path, so splitting the work across
+/// several invocations produces exactly the index one invocation would have.
 pub fn stage_candidate_patch(
     workspace: impl AsRef<Path>,
     base: &str,
@@ -219,18 +236,48 @@ pub fn stage_candidate_patch(
         return Ok(());
     }
 
-    let mut args = vec![
-        "reset".to_string(),
-        "--quiet".to_string(),
-        base.to_string(),
-        "--".to_string(),
-    ];
+    // Validate every path before running anything: a rejected path must not
+    // leave the index half-reset behind an already-executed batch.
     for entry in &candidate.excluded {
         validate_git_path(&entry.path)?;
-        args.push(entry.path.clone());
     }
-    run_git(workspace, args)?;
+
+    for batch in reset_batches(&candidate.excluded) {
+        let mut args = vec![
+            "reset".to_string(),
+            "--quiet".to_string(),
+            base.to_string(),
+            "--".to_string(),
+        ];
+        args.extend(batch.iter().map(|path| (*path).to_string()));
+        run_git(workspace, args)?;
+    }
     Ok(())
+}
+
+/// Splits excluded paths into groups that fit in one argument vector.
+fn reset_batches(excluded: &[forge_core::patch::ExcludedEntry]) -> Vec<Vec<&str>> {
+    let mut batches = Vec::new();
+    let mut batch: Vec<&str> = Vec::new();
+    let mut bytes = 0;
+
+    for entry in excluded {
+        // A single path longer than the whole budget still has to be attempted;
+        // it goes out alone rather than being silently dropped.
+        let len = entry.path.len() + 1;
+        if !batch.is_empty()
+            && (bytes + len > MAX_RESET_ARG_BYTES || batch.len() >= MAX_RESET_ARG_COUNT)
+        {
+            batches.push(std::mem::take(&mut batch));
+            bytes = 0;
+        }
+        batch.push(entry.path.as_str());
+        bytes += len;
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
 }
 
 /// Unified diff for the currently staged candidate.
@@ -342,6 +389,70 @@ mod tests {
         .unwrap();
         let worktree = manager.create("R-0001", &base, "forge/R-0001").unwrap();
         (manager, worktree)
+    }
+
+    fn excluded(paths: Vec<String>) -> Vec<forge_core::patch::ExcludedEntry> {
+        paths
+            .into_iter()
+            .map(|path| forge_core::patch::ExcludedEntry {
+                path,
+                change: ChangeKind::Added,
+                reason: forge_core::patch::ExclusionReason::GitIgnored,
+            })
+            .collect()
+    }
+
+    /// An agent that compiles the project it is working on leaves tens of
+    /// thousands of ignored build artifacts behind, and every one is an excluded
+    /// path. Passing them all to one `git reset` overflows the argument vector
+    /// and fails with `E2BIG` ("Argument list too long"), which is exactly what
+    /// happened to the first two real Forge-on-Forge runs: the agent succeeded,
+    /// and Forge could not capture the patch.
+    #[test]
+    fn excluded_paths_are_batched_below_the_argument_limit() {
+        let paths: Vec<String> = (0..15_338)
+            .map(|i| format!("target/debug/build/some-crate-{i:012}/out/generated.rs"))
+            .collect();
+        let entries = excluded(paths.clone());
+
+        let batches = reset_batches(&entries);
+        assert!(
+            batches.len() > 1,
+            "15k paths must not go out in one invocation"
+        );
+
+        for batch in &batches {
+            let bytes: usize = batch.iter().map(|p| p.len() + 1).sum();
+            assert!(
+                bytes <= MAX_RESET_ARG_BYTES,
+                "batch of {bytes} bytes exceeds the budget"
+            );
+            assert!(
+                batch.len() <= MAX_RESET_ARG_COUNT,
+                "batch holds {} paths",
+                batch.len()
+            );
+        }
+
+        // Every path must be reset exactly once: dropping one would leave
+        // excluded content staged, and repeating one is wasted work.
+        let flattened: Vec<&str> = batches.iter().flatten().copied().collect();
+        assert_eq!(flattened.len(), paths.len());
+        assert_eq!(
+            flattened,
+            paths.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+    }
+
+    /// A single path larger than the whole budget is still attempted rather
+    /// than silently skipped.
+    #[test]
+    fn an_oversized_single_path_is_still_emitted() {
+        let long = "a".repeat(MAX_RESET_ARG_BYTES * 2);
+        let entries = excluded(vec!["short.rs".to_string(), long.clone()]);
+        let batches = reset_batches(&entries);
+        let flattened: Vec<&str> = batches.iter().flatten().copied().collect();
+        assert_eq!(flattened, vec!["short.rs", long.as_str()]);
     }
 
     #[test]

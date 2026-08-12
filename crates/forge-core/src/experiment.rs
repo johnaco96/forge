@@ -653,6 +653,7 @@ mod tests {
             binary_files: 0,
             diff_path: None,
             excluded: Vec::new(),
+            excluded_counts: Default::default(),
         });
         run.execution = Some(AgentExecution {
             status: crate::run::AgentExecutionStatus::Completed,

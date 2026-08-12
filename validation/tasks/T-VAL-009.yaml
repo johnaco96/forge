@@ -1,0 +1,43 @@
+task_id: T-VAL-009
+repository: forge
+objective: >-
+  `StoreError` is carefully typed for most of the ledger: rebinding a task
+  revision, changing provenance, rewriting a finalized team execution, and
+  conflicting artifact hashes each have their own variant with a specific
+  message. The Phase 8 policy module does not follow that standard. It routes
+  at least six structurally different failures — an invalid lifecycle
+  transition, a fingerprint that no longer matches its record, a policy scoped
+  to the wrong repository, a proposal filed with mismatched evidence, a decision
+  misattributing behaviour to a policy — all through `StoreError::Corrupt`, a
+  variant documented as meaning the ledger was written by something other than
+  Forge or edited by hand. That is misleading: none of these indicate
+  corruption, and a caller cannot distinguish "you asked for an illegal
+  transition" from "your database is damaged". Bring the policy failures up to
+  the standard the rest of the crate already sets.
+constraints:
+  - "`Corrupt` must be left meaning what it says: an unreadable or hand-edited ledger"
+  - Every message must remain at least as specific as it is today
+  - Callers that currently match on error kinds must keep compiling or be updated in the same change
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: refactor
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+  - forge-policy
+tags:
+  - validation-campaign
+  - campaign-v1
+  - tier2-repetition
+  - team-candidate

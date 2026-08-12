@@ -1,0 +1,42 @@
+task_id: T-VAL-018
+repository: forge
+objective: >-
+  `task_revision_profiles()` loads every task revision in the ledger, together
+  with its components and tags, and builds a map of the whole corpus. Both
+  `history()` and `export_records()` call it unconditionally on entry, before
+  any filter is applied. A `forge history --limit 20` therefore materialises
+  every task the repository has ever defined in order to annotate twenty rows,
+  and the cost grows with the corpus rather than with the answer. The map is the
+  right shape for export, which really does touch everything; it is the wrong
+  shape for a filtered, limited history query. Make the cost of these paths
+  proportional to the rows actually returned, without changing what either one
+  returns.
+constraints:
+  - Both paths must return exactly what they return today, including annotation fields
+  - A run whose task revision is missing must still be reported as a corrupt ledger, not silently dropped
+  - Do not introduce a cache with a lifetime longer than a single call
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  benchmark:
+    command: >-
+      cargo build --release -p forge-store >/dev/null 2>&1; t=""; for i in 1 2 3; do s=$(date +%s%N); cargo test --release -p forge-store --quiet >/dev/null 2>&1; e=$(date +%s%N); t="$t $(( (e-s)/1000000 ))"; done; med=$(echo $t | tr " " "\n" | sort -n | sed -n 2p); printf "{\"metrics\":{\"store_suite_wall_ms\":{\"value\":%s,\"unit\":\"ms\",\"direction\":\"minimize\"},\"store_suite_repeats\":{\"value\":3,\"unit\":\"runs\",\"direction\":\"neutral\"}}}" "$med" > .forge-metrics.json
+    metrics_file: .forge-metrics.json
+    timeout_secs: 2400
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: performance
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1

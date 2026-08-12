@@ -229,6 +229,7 @@ async fn record_run(
         binary_files: 0,
         diff_path: None,
         excluded: Vec::new(),
+        excluded_counts: Default::default(),
     });
     run.evaluation_verdict = Some(Verdict::Pass);
     run.outcome = Some(RunOutcome::Passed);

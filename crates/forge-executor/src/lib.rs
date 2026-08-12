@@ -17,5 +17,6 @@ pub use error::{ExecError, ExecResult};
 pub use process::{ExecOutcome, ExecRequest, ProcessRunner, find_executable};
 pub use sandbox::{EnvPolicy, Redactor};
 pub use workspace::{
-    PatchCapture, WorkspaceProvider, WorktreeProvider, capture_candidate_patch, capture_patch,
+    PatchCapture, RETAINED_IGNORED_EXCLUSIONS, WorkspaceProvider, WorktreeProvider,
+    capture_candidate_patch, capture_patch,
 };

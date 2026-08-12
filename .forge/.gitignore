@@ -6,3 +6,4 @@ teams/
 forge.db
 forge.db-wal
 forge.db-shm
+validation-archive/

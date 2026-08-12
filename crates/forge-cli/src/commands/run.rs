@@ -458,13 +458,7 @@ fn print_patch(patch: Option<&PatchSummary>, layout: &Layout) {
     };
     if patch.is_empty() {
         println!("  no changes");
-        if !patch.excluded.is_empty() {
-            println!(
-                "  {} workspace change{} excluded by patch policy",
-                patch.excluded.len(),
-                if patch.excluded.len() == 1 { "" } else { "s" }
-            );
-        }
+        print_exclusions(patch);
         return;
     }
     println!(
@@ -486,12 +480,26 @@ fn print_patch(patch: Option<&PatchSummary>, layout: &Layout) {
     if let Some(commit) = &patch.head_commit {
         println!("  committed as {}", short(commit));
     }
-    if !patch.excluded.is_empty() {
-        println!(
-            "  {} workspace change{} excluded by patch policy",
-            patch.excluded.len(),
-            if patch.excluded.len() == 1 { "" } else { "s" }
-        );
+    print_exclusions(patch);
+}
+
+/// Summarizes exclusions from the canonical record.
+///
+/// The total comes from the exact counts, not from the retained list: the
+/// durable record keeps every judgment Forge made but only a sample of ignored
+/// build artifacts, and reporting the sample size as the total would understate
+/// what was excluded by four orders of magnitude.
+fn print_exclusions(patch: &PatchSummary) {
+    let total = patch.excluded_total();
+    if total == 0 {
+        return;
+    }
+    println!(
+        "  {total} workspace change{} excluded by patch policy",
+        if total == 1 { "" } else { "s" }
+    );
+    for (reason, count) in &patch.excluded_counts {
+        println!("    {reason}: {count}");
     }
 }
 
@@ -589,18 +597,49 @@ fn print_evaluation(report: &RunReport) {
     }
 }
 
+/// Examples shown per warning kind before the rest are counted.
+///
+/// An agent that compiles the project leaves tens of thousands of ignored build
+/// artifacts behind, and the patch policy warns about every one. Printing them
+/// all buries the evaluation under 26,000 lines that all say the same thing —
+/// the first real passing run produced a 4 MB report. The warnings are still
+/// recorded in full; only the report summarizes them.
+const WARNING_EXAMPLES_PER_KIND: usize = 3;
+
 fn print_warnings(report: &RunReport) {
     if report.run.warnings.is_empty() {
         return;
     }
     println!("\nPatch warnings");
+
+    // Grouped in first-seen order, so the output stays deterministic and the
+    // most structurally interesting warning is not buried behind a common one.
+    let mut order: Vec<&str> = Vec::new();
+    let mut grouped: std::collections::HashMap<&str, Vec<&forge_core::patch::PatchWarning>> =
+        std::collections::HashMap::new();
     for warning in &report.run.warnings {
-        let path = warning
-            .path
-            .as_ref()
-            .map(|path| format!(" [{path}]"))
-            .unwrap_or_default();
-        println!("  - {}{}: {}", warning.kind, path, warning.detail);
+        let kind = warning.kind.as_str();
+        if !grouped.contains_key(kind) {
+            order.push(kind);
+        }
+        grouped.entry(kind).or_default().push(warning);
+    }
+
+    for kind in order {
+        let warnings = &grouped[kind];
+        for warning in warnings.iter().take(WARNING_EXAMPLES_PER_KIND) {
+            let path = warning
+                .path
+                .as_ref()
+                .map(|path| format!(" [{path}]"))
+                .unwrap_or_default();
+            println!("  - {}{}: {}", warning.kind, path, warning.detail);
+        }
+        if let Some(remaining) = warnings.len().checked_sub(WARNING_EXAMPLES_PER_KIND)
+            && remaining > 0
+        {
+            println!("  - {kind}: and {remaining} more");
+        }
     }
 }
 

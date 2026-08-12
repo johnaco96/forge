@@ -128,6 +128,14 @@ pub fn capture_patch(
     .summary)
 }
 
+/// Ignored-file exclusions kept path-by-path in the durable run record.
+///
+/// Enough to show what was excluded and what it looked like, without storing an
+/// agent's entire build tree. One real run excluded 26,286 ignored paths and
+/// produced an 8.8 MB record; the exact count is preserved in
+/// `PatchSummary::excluded_counts` regardless of how many paths are retained.
+pub const RETAINED_IGNORED_EXCLUSIONS: usize = 20;
+
 /// Patch capture at the explicit workspace-delta/policy/candidate boundary.
 #[derive(Debug, Clone)]
 pub struct PatchCapture {
@@ -191,7 +199,8 @@ pub fn capture_candidate_patch(
             deletions: candidate.deletions(),
             binary_files: candidate.binary_files(),
             diff_path: written,
-            excluded: candidate.excluded.clone(),
+            excluded: candidate.retained_exclusions(RETAINED_IGNORED_EXCLUSIONS),
+            excluded_counts: candidate.exclusion_counts(),
         },
         delta,
         candidate,
@@ -485,11 +494,22 @@ mod tests {
 
         assert!(captured.summary.is_empty());
         assert_eq!(captured.summary.head_commit, None);
-        assert!(
-            captured.candidate.warnings.iter().any(|warning| {
-                warning.kind == forge_core::patch::WarningKind::LargeFileExcluded
-            })
-        );
+        // The exclusion itself is the record, and it carries the size that
+        // caused it. A size-limit exclusion is one of Forge's own judgments, so
+        // it is retained in the durable summary rather than sampled away.
+        assert!(captured.candidate.excluded.iter().any(|entry| {
+            matches!(
+                entry.reason,
+                forge_core::patch::ExclusionReason::TooLarge { .. }
+            )
+        }));
+        assert!(captured.summary.excluded.iter().any(|entry| {
+            matches!(
+                entry.reason,
+                forge_core::patch::ExclusionReason::TooLarge { .. }
+            )
+        }));
+        assert_eq!(captured.summary.excluded_counts.get("too_large"), Some(&1));
         assert_eq!(
             forge_git::patch_between(
                 fixture.repo.root(),

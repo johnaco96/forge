@@ -1,0 +1,42 @@
+task_id: T-VAL-006
+repository: forge
+objective: >-
+  `forge export --format jsonl` emits every run the ledger has ever held, with
+  no way to narrow it. `forge history` already accepts a rich filter — agent,
+  outcome, task, repository, experiment, date range, category, language, domain,
+  difficulty, component, tag — and `HistoryFilter` is a public type in
+  forge-store. Anyone analysing a single campaign, a single agent, or a single
+  window currently has to export the whole ledger and filter it downstream,
+  which gets slower and more error-prone as the ledger grows. Let export accept
+  the same filtering vocabulary the history command already understands, so that
+  the exported set is defined by Forge rather than by whatever the reader's
+  script happened to do.
+constraints:
+  - The unfiltered invocation must keep its current output exactly
+  - Filter semantics must match `forge history`; two spellings of one concept is worse than none
+  - The export schema version must change if and only if the record shape changes
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: export_accepts_filters
+      command: cargo run --quiet --bin forge -- export --help 2>&1 | grep -Eqi 'agent|repository|outcome'
+      timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: feature
+  language: rust
+  domain: cli
+  difficulty: medium
+components:
+  - forge-cli
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1

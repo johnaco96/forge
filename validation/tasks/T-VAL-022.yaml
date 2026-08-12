@@ -1,0 +1,46 @@
+task_id: T-VAL-022
+repository: forge
+objective: >-
+  Starting a run is expensive and irreversible in the ways that matter: it
+  provisions a worktree, spends real provider budget, and writes a permanent
+  ledger record. Yet there is no way to find out what a run *would* do first.
+  Which agent routing would pick, whether routing would decline to pick at all,
+  which policy is in force and what it resolves to, how much repository context
+  would be supplied, and which evaluators the task declares are all decided
+  inside `forge run` and only become visible once the money is committed. Let a
+  user see that resolution without executing anything, so a task can be checked
+  against the strategy that will actually govern it before an agent is started.
+constraints:
+  - Absolutely no agent execution, no workspace provisioning, and no run record
+  - Must report the same resolution the real path would use, not a re-derived approximation
+  - An explicit user agent choice must be shown as overriding what policy or routing would pick
+  - Routing declining to select must be reported as such, not as an error
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: preview_creates_no_run_record
+      command: >-
+        before=$(cargo run --quiet --bin forge -- history --limit 1000 2>/dev/null | wc -l);
+        cargo run --quiet --bin forge -- run .forge/tasks/example.yaml --help >/dev/null 2>&1 || true;
+        after=$(cargo run --quiet --bin forge -- history --limit 1000 2>/dev/null | wc -l);
+        test "$before" = "$after"
+      timeout_secs: 1800
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: feature
+  language: rust
+  domain: cli
+  difficulty: medium
+components:
+  - forge-cli
+  - forge-policy
+tags:
+  - validation-campaign
+  - campaign-v1

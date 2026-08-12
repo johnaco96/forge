@@ -1,0 +1,44 @@
+task_id: T-VAL-016
+repository: forge
+objective: >-
+  Two of the ledger's widest read paths load evaluations one run at a time.
+  `Store::export_records` iterates every run and issues a separate
+  `load_evaluation` query per row; `health_run_evidence` does the same, with
+  a comment acknowledging the choice and justifying it by the cost of
+  reconstructing typed checks from a join. That justification is about parsing,
+  not about round-trips, and the two are separable: the documents still have to
+  be parsed once each, but they do not have to be fetched one query at a time.
+  On a ledger with thousands of runs this is thousands of sequential round-trips
+  for what is logically one scan, and both paths are on the critical path of
+  `forge export` and `forge health build`. Reduce the round-trips without
+  changing a single value either path returns.
+constraints:
+  - Returned records must be identical, field for field, to what the current code produces
+  - Runs with no evaluation must remain distinguishable from runs with an empty one
+  - Memory use must stay bounded; do not fix round-trips by loading the whole ledger at once
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  benchmark:
+    command: >-
+      cargo build --release -p forge-store >/dev/null 2>&1; t=""; for i in 1 2 3; do s=$(date +%s%N); cargo test --release -p forge-store --quiet >/dev/null 2>&1; e=$(date +%s%N); t="$t $(( (e-s)/1000000 ))"; done; med=$(echo $t | tr " " "\n" | sort -n | sed -n 2p); printf "{\"metrics\":{\"store_suite_wall_ms\":{\"value\":%s,\"unit\":\"ms\",\"direction\":\"minimize\"},\"store_suite_repeats\":{\"value\":3,\"unit\":\"runs\",\"direction\":\"neutral\"}}}" "$med" > .forge-metrics.json
+    metrics_file: .forge-metrics.json
+    timeout_secs: 2400
+protected_paths:
+  - validation/**
+classification:
+  category: performance
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - tier2-repetition
+  - team-candidate

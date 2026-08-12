@@ -1346,6 +1346,7 @@ mod tests {
                 ".forge/runs/R-{run_id:04}/patch.diff"
             ))),
             excluded: Vec::new(),
+            excluded_counts: Default::default(),
         });
         run.evaluation_verdict = Some(match outcome {
             RunOutcome::Passed => Verdict::Pass,

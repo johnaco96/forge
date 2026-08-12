@@ -1,0 +1,41 @@
+task_id: T-VAL-014
+repository: forge
+objective: >-
+  Migration 0012 adds the Phase 8 policy schema and three nullable columns to
+  `runs`, on the explicit promise that no Phase 0–7 evidence is rewritten and
+  that a run no policy governed never comes to look as though one did. The
+  migration is exercised against freshly created databases, where every table is
+  empty and that promise is trivially true. It is not exercised against a ledger
+  that already holds Phase 0–7 history: real runs, patches, evaluations, events,
+  routing decisions, team executions, world models, and health snapshots. That
+  is the only case where the promise can actually be broken, and it is the case
+  every existing user will hit on upgrade. Establish an upgrade test that
+  populates a pre-0012 ledger with representative history, migrates it, and
+  proves the historical evidence is byte-for-byte unchanged and still queryable
+  through the ordinary APIs.
+constraints:
+  - The test must migrate a genuinely populated ledger, not an empty one
+  - Historical runs must be shown to carry no policy attribution after migration
+  - Do not modify migration 0012's schema to make the test easier
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-store/migrations/**
+classification:
+  category: testing
+  language: rust
+  domain: persistence
+  difficulty: hard
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - team-candidate
+  - context-experiment

@@ -43,7 +43,8 @@ base commit into a comparative experiment.
 | **Task-driven multi-agent DAG execution with final evaluation** | ✅ |
 | **Immutable, commit-bound Repository World Model** | ✅ |
 | **Longitudinal repository health and typed trends** | ✅ |
-| **Immutable, evidence-backed engineering policy optimization** | ✅ Phase 8 review candidate |
+| **Immutable, evidence-backed engineering policy optimization** | ✅ |
+| Empirical validation campaign (20 real tasks, pre-registered analysis) | 🔬 prepared, blocked on Codex availability |
 
 ---
 
@@ -235,6 +236,9 @@ See [`docs/phase-7-longitudinal-health.md`](docs/phase-7-longitudinal-health.md)
 for missing-data, comparability, attribution, and trend semantics.
 See [`docs/policy-optimization.md`](docs/policy-optimization.md) for immutable
 engineering policies, evidence-backed proposals, canaries, and rollback.
+See [`docs/validation.md`](docs/validation.md) for the empirical validation
+program: the 20-task corpus, the pre-registered analysis rules, and what has
+actually been measured rather than built.
 
 ---
 

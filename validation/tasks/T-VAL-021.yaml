@@ -1,0 +1,44 @@
+task_id: T-VAL-021
+repository: forge
+objective: >-
+  `forge experiments list` shows recorded competitive experiments one line at a
+  time, and that is the only way to see them. The ledger holds much more: each
+  experiment records the base commit every participant shared, the agents that
+  took part, the runs they produced, and a pairwise comparison with per-dimension
+  relations that deliberately stops short of naming an overall winner. None of
+  that is reachable without reading the SQLite file by hand, so the most
+  interesting thing Forge records about a competition is also the least
+  accessible. Give the experiments command a way to inspect a single recorded
+  experiment in full, preserving the distinction the comparison itself makes
+  between dimensions where one participant was better and dimensions where the
+  evidence does not separate them.
+constraints:
+  - Read-only; inspecting an experiment must not alter it or any run it links
+  - Must not invent an overall winner where the recorded comparison declines to name one
+  - A participant run that errored must still appear, marked as such, not omitted
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: experiment_inspection_reachable
+      command: cargo run --quiet --bin forge -- experiments --help 2>&1 | grep -Eqi 'show|inspect|detail'
+      timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: feature
+  language: rust
+  domain: cli
+  difficulty: small
+components:
+  - forge-cli
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - tier2-repetition

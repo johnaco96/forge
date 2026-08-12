@@ -149,6 +149,19 @@ pub enum ExclusionReason {
 }
 
 impl ExclusionReason {
+    /// Stable name, used as the key when exclusions are counted by reason.
+    ///
+    /// Deliberately independent of the size fields on `TooLarge`, so every
+    /// oversized file lands in one bucket rather than one bucket per byte count.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ForgeArtifact => "forge_artifact",
+            Self::GitInternal => "git_internal",
+            Self::GitIgnored => "git_ignored",
+            Self::TooLarge { .. } => "too_large",
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Self::ForgeArtifact => "Forge runtime artifact".to_string(),
@@ -286,6 +299,17 @@ impl PatchPolicy {
     }
 
     /// Splits a delta into the candidate patch and what was left out.
+    ///
+    /// An exclusion produces an [`ExcludedEntry`] and nothing else. It used to
+    /// produce a [`PatchWarning`] as well, carrying the same path and the same
+    /// reason — a second copy of one fact, not a second fact. An agent that
+    /// compiles the project it is working on leaves tens of thousands of ignored
+    /// build artifacts behind, so that duplication was the dominant cost of a
+    /// successful run: one real run recorded 26,286 of each.
+    ///
+    /// Warnings are now reserved for something the excluded list cannot say.
+    /// `BinaryFile` is the surviving case here: it describes an entry that was
+    /// *included*, so it appears nowhere in `excluded`.
     pub fn apply(&self, delta: &WorkspaceDelta) -> CandidatePatch {
         let mut included = Vec::new();
         let mut excluded = Vec::new();
@@ -293,7 +317,6 @@ impl PatchPolicy {
 
         for entry in &delta.entries {
             if let Some(reason) = self.exclusion_for(entry) {
-                warnings.push(warning_for(&reason, entry));
                 excluded.push(ExcludedEntry {
                     path: entry.path.clone(),
                     change: entry.change,
@@ -353,14 +376,20 @@ impl PatchPolicy {
     }
 }
 
-fn warning_for(reason: &ExclusionReason, entry: &DeltaEntry) -> PatchWarning {
-    let kind = match reason {
-        ExclusionReason::ForgeArtifact => WarningKind::ForgeArtifactExcluded,
-        ExclusionReason::GitInternal => WarningKind::GitInternalExcluded,
-        ExclusionReason::GitIgnored => WarningKind::GitIgnoredExcluded,
-        ExclusionReason::TooLarge { .. } => WarningKind::LargeFileExcluded,
-    };
-    PatchWarning::new(kind, Some(entry.path.clone()), reason.describe())
+/// The warning kind an exclusion reason used to be duplicated into.
+///
+/// No longer emitted — [`PatchPolicy::apply`] records the [`ExcludedEntry`] and
+/// stops there. Retained because runs recorded before that change still hold
+/// these warnings, and reading a historical record must keep working.
+impl ExclusionReason {
+    pub fn legacy_warning_kind(&self) -> WarningKind {
+        match self {
+            Self::ForgeArtifact => WarningKind::ForgeArtifactExcluded,
+            Self::GitInternal => WarningKind::GitInternalExcluded,
+            Self::GitIgnored => WarningKind::GitIgnoredExcluded,
+            Self::TooLarge { .. } => WarningKind::LargeFileExcluded,
+        }
+    }
 }
 
 /// The change Forge will evaluate, and what it declined to include.
@@ -400,6 +429,46 @@ impl CandidatePatch {
 
     pub fn paths(&self) -> Vec<String> {
         self.included.iter().map(|e| e.path.clone()).collect()
+    }
+
+    /// Exact count of exclusions per reason, keyed by the reason's stable name.
+    ///
+    /// Counts are never sampled or truncated, so the durable record can bound
+    /// how many paths it keeps without ever losing how many there were.
+    pub fn exclusion_counts(&self) -> BTreeMap<String, u64> {
+        let mut counts = BTreeMap::new();
+        for entry in &self.excluded {
+            *counts.entry(entry.reason.as_str().to_string()).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// The exclusions worth keeping path-by-path in the durable record.
+    ///
+    /// Forge's own judgments — a Forge artifact, a Git internal, a file over the
+    /// size limit — are kept in full: they are decisions Forge made, an operator
+    /// may want to inspect each one, and their number is bounded by the policy
+    /// rather than by the agent's build output.
+    ///
+    /// Ignored files are different. `.gitignore` is the repository's own
+    /// standing declaration that those paths are not source, and re-listing tens
+    /// of thousands of them per run stores the expansion of that declaration
+    /// rather than anything about the run. A bounded sample is kept so the
+    /// record still shows what was excluded and looks like; the exact count
+    /// lives in [`Self::exclusion_counts`].
+    pub fn retained_exclusions(&self, ignored_sample: usize) -> Vec<ExcludedEntry> {
+        let mut retained = Vec::new();
+        let mut ignored_kept = 0;
+        for entry in &self.excluded {
+            if entry.reason == ExclusionReason::GitIgnored {
+                if ignored_kept >= ignored_sample {
+                    continue;
+                }
+                ignored_kept += 1;
+            }
+            retained.push(entry.clone());
+        }
+        retained
     }
 
     /// Excluded paths grouped by whether they existed at the base commit,
@@ -497,13 +566,12 @@ mod tests {
                 .iter()
                 .all(|e| e.reason == ExclusionReason::ForgeArtifact)
         );
+        // The exclusions are the record. A warning per excluded path would be a
+        // second copy of the same three facts.
+        assert!(candidate.warnings.is_empty());
         assert_eq!(
-            candidate
-                .warnings
-                .iter()
-                .filter(|w| w.kind == WarningKind::ForgeArtifactExcluded)
-                .count(),
-            3
+            candidate.exclusion_counts(),
+            BTreeMap::from([("forge_artifact".to_string(), 3)])
         );
     }
 
@@ -544,9 +612,14 @@ mod tests {
                 limit: 1024
             }
         );
-        let warning = &candidate.warnings[0];
-        assert_eq!(warning.kind, WarningKind::LargeFileExcluded);
-        assert!(warning.detail.contains("50.0 KiB"), "{}", warning.detail);
+        // The size is carried by the exclusion itself, so nothing is lost by not
+        // restating it as a warning.
+        assert!(candidate.warnings.is_empty());
+        assert!(
+            candidate.excluded[0].reason.describe().contains("50.0 KiB"),
+            "{}",
+            candidate.excluded[0].reason.describe()
+        );
     }
 
     #[test]
@@ -558,7 +631,144 @@ mod tests {
 
         assert_eq!(candidate.paths(), vec!["src/lib.rs"]);
         assert_eq!(candidate.excluded[0].reason, ExclusionReason::GitIgnored);
-        assert_eq!(candidate.warnings[0].kind, WarningKind::GitIgnoredExcluded);
+        assert!(candidate.warnings.is_empty());
+    }
+
+    /// Approximates the shape that made a real run cost 8.8 MB: an agent
+    /// compiled the project, leaving tens of thousands of ignored artifacts.
+    fn build_output_delta(ignored: usize) -> WorkspaceDelta {
+        let mut entries = vec![source("crates/forge-store/src/policy.rs")];
+        for i in 0..ignored {
+            let mut artifact = binary(
+                &format!("target/debug/incremental/world-1y9ofmmqkp4kw/s-hla4140apt/{i:016}.o"),
+                4096,
+            );
+            artifact.is_ignored = true;
+            entries.push(artifact);
+        }
+        WorkspaceDelta::new(entries)
+    }
+
+    /// Thousands of ignored artifacts must not become thousands of warnings
+    /// that each restate their own exclusion entry.
+    #[test]
+    fn a_build_tree_produces_no_duplicate_warnings() {
+        let candidate = PatchPolicy::default().apply(&build_output_delta(15_338));
+
+        assert_eq!(candidate.paths(), vec!["crates/forge-store/src/policy.rs"]);
+        assert_eq!(candidate.excluded.len(), 15_338);
+        assert!(
+            candidate.warnings.is_empty(),
+            "{} warnings duplicated {} exclusions",
+            candidate.warnings.len(),
+            candidate.excluded.len()
+        );
+    }
+
+    /// The exclusions stay available in full as raw evidence at capture time —
+    /// `stage_candidate_patch` needs every one of them.
+    #[test]
+    fn every_excluded_path_remains_available_as_raw_evidence() {
+        let candidate = PatchPolicy::default().apply(&build_output_delta(5_000));
+
+        assert_eq!(candidate.excluded.len(), 5_000);
+        assert!(
+            candidate
+                .excluded
+                .iter()
+                .all(|entry| entry.reason == ExclusionReason::GitIgnored)
+        );
+        assert_eq!(
+            candidate.exclusion_counts(),
+            BTreeMap::from([("git_ignored".to_string(), 5_000)])
+        );
+    }
+
+    /// What the durable record keeps is bounded, while the exact count is not.
+    #[test]
+    fn the_durable_record_bounds_ignored_paths_but_never_their_count() {
+        let candidate = PatchPolicy::default().apply(&build_output_delta(15_338));
+        let retained = candidate.retained_exclusions(20);
+
+        assert_eq!(retained.len(), 20);
+        assert_eq!(candidate.exclusion_counts()["git_ignored"], 15_338);
+
+        // Serialized size is what actually broke: bound it against the shape
+        // that produced an 8.8 MB record.
+        let bounded = serde_json::to_string(&retained).expect("retained serializes");
+        let unbounded = serde_json::to_string(&candidate.excluded).expect("full serializes");
+        assert!(
+            bounded.len() < 8 * 1024,
+            "retained exclusions serialize to {} bytes",
+            bounded.len()
+        );
+        assert!(
+            unbounded.len() > 100 * bounded.len(),
+            "fixture is not representative: {} vs {}",
+            unbounded.len(),
+            bounded.len()
+        );
+    }
+
+    /// Forge's own judgments are never sampled away — only ignored files are,
+    /// and only because `.gitignore` already declared them uninteresting.
+    #[test]
+    fn forge_judgments_survive_sampling_but_ignored_files_are_capped() {
+        let mut entries = vec![source("src/lib.rs"), source(".git/config")];
+        let mut huge = source("data/dump.sql");
+        huge.size_bytes = Some(50 * 1024);
+        entries.push(huge);
+        for i in 0..1_000 {
+            let mut artifact = binary(&format!("target/debug/{i}.o"), 512);
+            artifact.is_ignored = true;
+            entries.push(artifact);
+        }
+
+        let candidate = PatchPolicy::default()
+            .with_max_file_bytes(1024)
+            .apply(&WorkspaceDelta::new(entries));
+        let retained = candidate.retained_exclusions(20);
+
+        assert!(
+            retained
+                .iter()
+                .any(|e| e.reason == ExclusionReason::GitInternal)
+        );
+        assert!(
+            retained
+                .iter()
+                .any(|e| matches!(e.reason, ExclusionReason::TooLarge { .. }))
+        );
+        assert_eq!(
+            retained
+                .iter()
+                .filter(|e| e.reason == ExclusionReason::GitIgnored)
+                .count(),
+            20
+        );
+        assert_eq!(candidate.exclusion_counts()["git_ignored"], 1_000);
+    }
+
+    /// A warning that says something the exclusion list cannot must survive.
+    #[test]
+    fn meaningful_warnings_are_still_emitted_among_the_noise() {
+        let mut entries = vec![source("src/lib.rs"), binary("assets/logo.png", 2048)];
+        for i in 0..5_000 {
+            let mut artifact = binary(&format!("target/debug/{i}.o"), 512);
+            artifact.is_ignored = true;
+            entries.push(artifact);
+        }
+
+        let candidate = PatchPolicy::default().apply(&WorkspaceDelta::new(entries));
+
+        // Exactly one warning, about an *included* file, which therefore appears
+        // nowhere in the exclusion list.
+        assert_eq!(candidate.warnings.len(), 1);
+        assert_eq!(candidate.warnings[0].kind, WarningKind::BinaryFile);
+        assert_eq!(
+            candidate.warnings[0].path.as_deref(),
+            Some("assets/logo.png")
+        );
     }
 
     #[test]

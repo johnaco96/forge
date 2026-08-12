@@ -652,18 +652,23 @@ impl Runner {
             Ok(outcome) => outcome,
             Err(err) => {
                 // A failure after the run exists is recorded, not thrown away.
-                tracing::warn!(run = %run_id, %err, "run failed");
+                let reason = describe_failure(&err);
+                tracing::warn!(run = %run_id, %reason, "run failed");
                 sink.emit(EventPayload::RunFailed {
-                    reason: err.to_string(),
+                    reason: reason.clone(),
                 });
                 if !run.status.is_terminal() {
-                    let _ = run.fail(err.to_string());
+                    let _ = run.fail(reason);
                 }
                 run.outcome = Some(RunOutcome::Errored);
                 self.persist(&run, None, &sink, experiment_id).await?;
                 self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
                     .await?;
-                return Ok(self.report(run, None, None, false, base_was_dirty, &sink));
+                // The workspace is deliberately never torn down on this path —
+                // a failed run's workspace is the most useful thing to look at.
+                // Reporting it as absent would tell the operator their evidence
+                // was discarded while it is still sitting on disk.
+                return Ok(self.report(run, None, None, true, base_was_dirty, &sink));
             }
         };
 
@@ -930,6 +935,30 @@ impl Runner {
     }
 }
 
+/// Renders a failure together with everything that caused it.
+///
+/// `Display` on a `thiserror` enum shows only the outermost message, so a
+/// wrapped I/O failure reaches the ledger as `running git in <path>` with the
+/// operating system's actual reason discarded. A persisted failure that cannot
+/// say why it failed is not evidence of anything, and this is the one record
+/// that survives a run Forge could not complete.
+///
+/// Causes already interpolated by an outer message are not repeated, so
+/// `#[error(transparent)]` variants do not stutter.
+fn describe_failure(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut next = error.source();
+    while let Some(cause) = next {
+        let text = cause.to_string();
+        if !message.contains(&text) {
+            message.push_str(": ");
+            message.push_str(&text);
+        }
+        next = cause.source();
+    }
+    message
+}
+
 /// The harness an agent id runs under.
 ///
 /// A lookup table rather than adapter knowledge: the runner never needs to know
@@ -981,4 +1010,61 @@ pub fn check_lines(evaluation: &Evaluation) -> Vec<(String, Verdict, String)> {
             (check.name.clone(), check.verdict, detail)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("{context}")]
+    struct Wrapped {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    }
+
+    /// A run Forge could not complete leaves exactly one durable explanation.
+    /// If that explanation drops the cause, the operator is told an operation
+    /// failed and never told why — which is what happened to the first real
+    /// dogfood run, whose failure reached the ledger as `running git in <path>`
+    /// with the underlying OS error discarded.
+    #[test]
+    fn a_recorded_failure_keeps_the_cause_that_produced_it() {
+        let error = Wrapped {
+            context: "running git in /tmp/w".to_string(),
+            source: std::io::Error::new(
+                std::io::ErrorKind::WouldBlock,
+                "Resource temporarily unavailable",
+            ),
+        };
+
+        assert_eq!(error.to_string(), "running git in /tmp/w");
+
+        let described = describe_failure(&error);
+        assert!(
+            described.starts_with("running git in /tmp/w"),
+            "{described}"
+        );
+        assert!(
+            described.contains("Resource temporarily unavailable"),
+            "the cause must survive into the persisted reason: {described}"
+        );
+    }
+
+    /// A cause already interpolated by its wrapper must not be repeated.
+    #[test]
+    fn an_already_interpolated_cause_is_not_repeated() {
+        #[derive(Debug, thiserror::Error)]
+        #[error("outer: {source}")]
+        struct Transparentish {
+            #[source]
+            source: std::io::Error,
+        }
+
+        let described = describe_failure(&Transparentish {
+            source: std::io::Error::other("inner detail"),
+        });
+        assert_eq!(described, "outer: inner detail");
+    }
 }

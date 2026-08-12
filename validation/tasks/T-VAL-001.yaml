@@ -1,0 +1,44 @@
+task_id: T-VAL-001
+repository: forge
+objective: >-
+  Several enums are persisted to SQLite by writing `as_str()` into a column and
+  read back by deserializing that column through serde. This only works while a
+  type's `as_str()` output and its serde discriminant agree, and for some
+  policy enums they do not: `ProposalRecommendation::as_str()` yields
+  "shadow-test" while its serde representation is "shadow_test", and
+  `ApprovalRequirement` diverges the same way. Those two are not currently read
+  back, so nothing is broken today — but the safety of the whole pattern rests
+  on a coincidence that no test protects, and the next person to add a
+  `WHERE recommendation = ?` filter or a parse of that column will not know.
+  Make the round-trip a proved property rather than an accident: every enum
+  whose value is written to a column and later parsed must be shown, by test,
+  to survive the round trip, and any enum whose display spelling differs from
+  its stored spelling must be structurally prevented from being read back by
+  the generic parse path.
+constraints:
+  - No stored column value may change meaning; existing ledgers must still load
+  - Display spellings shown to users must not change
+  - The fix must fail at compile time or test time, not at runtime on a user's ledger
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: debugging
+  language: rust
+  domain: persistence
+  difficulty: medium
+components:
+  - forge-store
+  - forge-core
+tags:
+  - validation-campaign
+  - campaign-v1
+  - tier2-repetition
+  - policy-evidence

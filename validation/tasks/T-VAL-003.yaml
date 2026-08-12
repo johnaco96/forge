@@ -1,0 +1,41 @@
+task_id: T-VAL-003
+repository: forge
+objective: >-
+  Phase 8 records which experiment arm a run landed on via
+  `Store::record_experiment_observation`, which inserts with
+  `ON CONFLICT DO NOTHING`. That is correct for idempotent re-recording, but it
+  makes two genuinely different situations indistinguishable to the caller: the
+  observation was already recorded, or the insert matched nothing meaningful.
+  The neighbouring `link_run_to_policy` was tightened to error when no run
+  matched; this path was not. An experiment whose observations are silently
+  dropped would still report a healthy status while its arms quietly diverge
+  from the runs that actually happened. Make the outcome of recording an
+  observation legible to the caller, and make it impossible to attach an
+  observation to a run or an experiment that does not exist without an error
+  saying so.
+constraints:
+  - Re-recording an identical observation must remain safe and must not error
+  - Recording a genuinely conflicting arm for the same run must not be silent
+  - Existing experiment budget and reporting behaviour must not change
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: debugging
+  language: rust
+  domain: policy
+  difficulty: medium
+components:
+  - forge-store
+  - forge-policy
+tags:
+  - validation-campaign
+  - campaign-v1
+  - policy-evidence

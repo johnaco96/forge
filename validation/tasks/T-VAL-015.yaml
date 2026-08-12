@@ -1,0 +1,47 @@
+task_id: T-VAL-015
+repository: forge
+objective: >-
+  Protected paths are the mechanism that stops an agent from editing the tests
+  it is judged by. The whole evaluation-integrity guarantee reduces to whether a
+  set of glob patterns matches the right files, and that matching is currently
+  covered by a small number of illustrative cases. The interesting cases are the
+  ones nobody wrote down: a pattern matching a directory versus its contents,
+  nested double-star, a path that differs only by case on a case-insensitive
+  filesystem, a file whose name contains glob metacharacters, a protected path
+  that is also listed as an allowed exception, and a rename that moves a file
+  into or out of the protected set. Strengthen the coverage of protected-path
+  matching so that its behaviour on these cases is pinned by test rather than
+  discovered during an incident.
+constraints:
+  - Document the intended behaviour for each case; a test that merely records current output is not enough
+  - If a case reveals genuinely wrong behaviour, fix it and say so in the change
+  - Do not relax the default protection semantics
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  security:
+    command: cargo test --package forge-core --lib integrity
+    timeout_secs: 900
+  custom:
+    - id: core_coverage_increased
+      command: >-
+        n=$(cargo test -p forge-core 2>&1 | grep -E '^test result' | awk '{s+=$4} END {print s+0}');
+        echo "forge-core tests: $n"; test "$n" -gt 239
+      timeout_secs: 1800
+protected_paths:
+  - validation/**
+classification:
+  category: testing
+  language: rust
+  domain: core
+  difficulty: medium
+components:
+  - forge-core
+tags:
+  - validation-campaign
+  - campaign-v1
+  - health-relevant

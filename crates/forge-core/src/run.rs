@@ -429,8 +429,19 @@ pub struct PatchSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_path: Option<PathBuf>,
     /// Workspace changes the patch policy declined to include, with reasons.
+    ///
+    /// Forge's own judgments are kept in full. Ignored files are sampled, since
+    /// re-listing an agent's whole build tree stores the expansion of the
+    /// repository's `.gitignore` rather than anything about the run. The exact
+    /// number is always in [`Self::excluded_counts`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub excluded: Vec<ExcludedEntry>,
+    /// Exact count of exclusions per reason. Never sampled.
+    ///
+    /// Additive: records written before this field deserialize with it empty,
+    /// and [`Self::excluded_total`] falls back to the retained list for them.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub excluded_counts: BTreeMap<String, u64>,
 }
 
 impl PatchSummary {
@@ -452,6 +463,24 @@ impl PatchSummary {
     /// saying out loud.
     pub fn looks_like_build_output(&self) -> bool {
         self.binary_files > 0
+    }
+
+    /// How many workspace changes the policy declined to include.
+    ///
+    /// Reads the exact counts when present, and falls back to the retained list
+    /// for records written before counts existed — where the list was complete,
+    /// so its length was the exact total.
+    pub fn excluded_total(&self) -> u64 {
+        if self.excluded_counts.is_empty() {
+            self.excluded.len() as u64
+        } else {
+            self.excluded_counts.values().sum()
+        }
+    }
+
+    /// Whether the retained exclusion list is a sample rather than the whole set.
+    pub fn exclusions_sampled(&self) -> bool {
+        self.excluded_total() > self.excluded.len() as u64
     }
 }
 
@@ -657,6 +686,62 @@ mod tests {
         }
     }
 
+    /// Runs recorded before exclusions stopped being duplicated into warnings
+    /// still hold both, and must keep loading with their totals intact.
+    #[test]
+    fn a_pre_dedup_record_still_reads_with_its_original_totals() {
+        let legacy = serde_json::json!({
+            "base_commit": "c566354",
+            "files_changed": 1,
+            "insertions": 116,
+            "deletions": 18,
+            "binary_files": 0,
+            "excluded": [
+                {"path": "target/debug/a.o", "change": "added", "reason": "git_ignored"},
+                {"path": "target/debug/b.o", "change": "added", "reason": "git_ignored"}
+            ]
+        });
+
+        let summary: PatchSummary = serde_json::from_value(legacy).expect("legacy record loads");
+
+        // No counts were written back then, so the retained list was complete
+        // and its length is the exact total.
+        assert!(summary.excluded_counts.is_empty());
+        assert_eq!(summary.excluded_total(), 2);
+        assert!(!summary.exclusions_sampled());
+    }
+
+    /// A record written now reports the true total even though the retained
+    /// list is a sample.
+    #[test]
+    fn a_sampled_record_reports_the_true_total() {
+        let summary = PatchSummary {
+            base_commit: "c566354".into(),
+            head_commit: None,
+            files_changed: 1,
+            insertions: 116,
+            deletions: 18,
+            binary_files: 0,
+            diff_path: None,
+            excluded: vec![ExcludedEntry {
+                path: "target/debug/a.o".into(),
+                change: crate::patch::ChangeKind::Added,
+                reason: crate::patch::ExclusionReason::GitIgnored,
+            }],
+            excluded_counts: BTreeMap::from([("git_ignored".to_string(), 26_286)]),
+        };
+
+        assert_eq!(summary.excluded_total(), 26_286);
+        assert!(summary.exclusions_sampled());
+
+        let encoded = serde_json::to_string(&summary).expect("serializes");
+        assert!(
+            encoded.len() < 1024,
+            "a sampled summary must stay small: {} bytes",
+            encoded.len()
+        );
+    }
+
     fn patch(files: u64) -> PatchSummary {
         PatchSummary {
             base_commit: "a73cf21".into(),
@@ -667,6 +752,7 @@ mod tests {
             binary_files: 0,
             diff_path: None,
             excluded: Vec::new(),
+            excluded_counts: Default::default(),
         }
     }
 
@@ -925,6 +1011,7 @@ mod tests {
             binary_files: 0,
             diff_path: None,
             excluded: Vec::new(),
+            excluded_counts: Default::default(),
         };
         assert_eq!(patch.lines_changed(), 183);
         assert!(!patch.is_empty());

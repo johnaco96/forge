@@ -1,0 +1,43 @@
+task_id: T-VAL-023
+repository: forge
+objective: >-
+  Every run is recorded under a harness label — `claude-code`, `codex-cli` — and
+  that label is how historical evidence stays interpretable after an agent is
+  renamed or removed. The agent registry already carries the authoritative
+  harness for each agent on its descriptor. The runner does not use it: it keeps
+  a private lookup table mapping agent id to harness, with a fallback that
+  quietly uses the agent id itself for anything it does not recognise. The two
+  cannot disagree today only because both were written by hand. Adding an agent
+  to the registry does not update the runner, so the first runs of any new agent
+  would be recorded under a harness label that no descriptor claims, and nothing
+  would report an error. Remove the second source of truth so a run's recorded
+  harness cannot drift from the registry that defines it.
+constraints:
+  - Historical runs keep the harness they were recorded under; this is not a rewrite
+  - An unknown agent must fail or be labelled deliberately, never silently mislabelled
+  - The runner must not gain knowledge of specific agents beyond what the registry provides
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: no_second_harness_table
+      command: "! grep -q 'claude-code' crates/forge-runner/src/lib.rs"
+      timeout_secs: 300
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: refactor
+  language: rust
+  domain: execution
+  difficulty: small
+components:
+  - forge-runner
+  - forge-agent
+tags:
+  - validation-campaign
+  - campaign-v1

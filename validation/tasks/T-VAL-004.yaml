@@ -1,0 +1,44 @@
+task_id: T-VAL-004
+repository: forge
+objective: >-
+  `EngineeringTask::warnings()` surfaces task-authoring mistakes at
+  `forge task validate` time — a missing evaluation, missing protected paths,
+  no constraints, a too-short objective. One common mistake is not covered: an
+  evaluator that declares a `metrics_file` and is marked required, but whose
+  command has no plausible way of producing that file. At runtime this does not
+  fail loudly; the benchmark evaluator treats a missing or malformed metrics
+  file as not-measurable, and the run lands as Inconclusive well after the agent
+  has been paid for. Task authors should learn this at validate time. Extend the
+  authoring warnings so a metrics-bearing evaluator whose contract cannot be
+  satisfied is reported before the task is ever run, without producing false
+  warnings for commands that legitimately write the file indirectly.
+constraints:
+  - Warnings must never block a task that is merely unusual; validation and warning stay separate
+  - No warning may fire for the existing `fixtures/test-repositories/median` task, which is correct
+  - Do not execute or shell out to evaluator commands during validation
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: median_fixture_still_clean
+      command: cargo run --quiet --bin forge -- task validate fixtures/test-repositories/median/task.yaml
+      timeout_secs: 900
+protected_paths:
+  - validation/**
+  - fixtures/**
+classification:
+  category: debugging
+  language: rust
+  domain: core
+  difficulty: medium
+components:
+  - forge-core
+  - forge-cli
+tags:
+  - validation-campaign
+  - campaign-v1
+  - context-experiment

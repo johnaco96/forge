@@ -1,0 +1,45 @@
+task_id: T-VAL-020
+repository: forge
+objective: >-
+  `EXPORT_SCHEMA_VERSION` is the contract between Forge's ledger and every
+  offline reader of it, and `ExportRecord` has already grown twice — execution
+  provenance and selection source were both added as additive Phase 4 fields,
+  each annotated in a comment explaining how older readers should treat them.
+  Nothing verifies that promise. There is no test that a record written under an
+  older schema version still deserializes, and no test that a newly added field
+  is genuinely additive rather than breaking an existing consumer. The comments
+  describe a compatibility policy that the code does not enforce, which is the
+  state most likely to produce a silently broken export a year from now.
+  Establish the compatibility guarantee as a test: pin representative serialized
+  records for each schema version the format has had, and prove the current code
+  still reads them and still writes something an older reader can consume.
+constraints:
+  - Pin real serialized fixtures; a round-trip through the current types proves nothing about compatibility
+  - The test must fail if a future field is added non-additively
+  - Do not change the current export shape as part of this task
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  custom:
+    - id: store_coverage_increased
+      command: >-
+        n=$(cargo test -p forge-store 2>&1 | grep -E '^test result' | awk '{s+=$4} END {print s+0}');
+        echo "forge-store tests: $n"; test "$n" -gt 42
+      timeout_secs: 1800
+protected_paths:
+  - validation/**
+classification:
+  category: persistence
+  language: rust
+  domain: persistence
+  difficulty: hard
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - health-relevant

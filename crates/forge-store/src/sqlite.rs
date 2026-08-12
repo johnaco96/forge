@@ -1313,6 +1313,7 @@ mod tests {
             binary_files: 0,
             diff_path: None,
             excluded: Vec::new(),
+            excluded_counts: Default::default(),
         });
         run.evaluation_verdict = Some(Verdict::Pass);
         run.integrity = Some(forge_core::EvaluationIntegrity {
@@ -1613,6 +1614,7 @@ mod tests {
                     binary_files: 0,
                     diff_path: None,
                     excluded: Vec::new(),
+                    excluded_counts: Default::default(),
                 },
             )
             .await

@@ -238,6 +238,7 @@ async fn add_arm_observation(
         binary_files: 0,
         diff_path: None,
         excluded: Vec::new(),
+        excluded_counts: Default::default(),
     });
     let mut integrity = EvaluationIntegrity::unchecked();
     if !integrity_clean {

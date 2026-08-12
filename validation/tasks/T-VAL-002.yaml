@@ -1,0 +1,37 @@
+task_id: T-VAL-002
+repository: forge
+objective: >-
+  `forge run` resolves the agent name before opening the ledger, but the
+  pre-flight is uneven. An unknown agent id is rejected with a helpful message,
+  yet the literal "auto" skips that check entirely, and an agent that appears in
+  `[agents.<id>]` configuration but has no registered adapter is not caught
+  until execution is already underway. The result is that a typo in a config
+  section surfaces as a mid-run failure with a worse message than the same typo
+  on the command line. Make the failure modes consistent: whatever a user can
+  get wrong about agent selection should be reported before any workspace is
+  provisioned, naming the specific problem and what to run to see valid options.
+constraints:
+  - A configuration or naming error must not create a persisted run record
+  - Existing successful run paths, including automatic routing, must behave identically
+  - Error text must name the offending value and a concrete next command
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+protected_paths:
+  - validation/**
+  - crates/forge-policy/tests/**
+classification:
+  category: debugging
+  language: rust
+  domain: cli
+  difficulty: small
+components:
+  - forge-cli
+  - forge-agent
+tags:
+  - validation-campaign
+  - campaign-v1

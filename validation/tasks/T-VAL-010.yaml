@@ -1,0 +1,48 @@
+task_id: T-VAL-010
+repository: forge
+objective: >-
+  Almost every CLI command begins with the same four steps: discover the
+  repository, build the layout, load the configuration, open the ledger at the
+  configured path. `resolve_repository` is already shared, but each command
+  module re-derives the store path and re-opens the ledger itself, and the
+  error context attached to that open is duplicated in several places with
+  slightly different wording. This is the seam where a new command is most
+  likely to forget something — the health and policy commands each need the
+  configured repository name, and getting it from the wrong place would scope
+  a query to the wrong repository. Consolidate the repeated preamble into one
+  place that hands a command everything it needs, so that adding a command
+  cannot get the repository scope or the ledger path subtly wrong.
+constraints:
+  - Externally visible CLI behaviour, output, and error messages must not regress
+  - Commands that legitimately need only the config, and not the ledger, must not be forced to open it
+  - No new dependency between the CLI and crates it does not already use
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  complexity:
+    command: >-
+      files=$(ls crates/forge-cli/src/commands/*.rs | wc -l | tr -d ' ');
+      opens=$(grep -c 'Store::open' crates/forge-cli/src/commands/*.rs | awk -F: '{s+=$2} END {print s+0}');
+      printf '{"metrics":{"cli_store_open_sites":{"value":%s,"unit":"sites","direction":"minimize"},"cli_command_modules":{"value":%s,"unit":"files","direction":"neutral"}}}' "$opens" "$files" > .forge-complexity.json
+    metrics_file: .forge-complexity.json
+    required: false
+    timeout_secs: 300
+protected_paths:
+  - validation/**
+  - crates/forge-cli/tests/**
+classification:
+  category: refactor
+  language: rust
+  domain: cli
+  difficulty: medium
+components:
+  - forge-cli
+tags:
+  - validation-campaign
+  - campaign-v1
+  - team-candidate
+  - context-experiment

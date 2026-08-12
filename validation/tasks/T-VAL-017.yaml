@@ -1,0 +1,43 @@
+task_id: T-VAL-017
+repository: forge
+objective: >-
+  `Store::policy_experiments` selects a page of experiment ids and then calls
+  `policy_experiment_by_id` once per id, so listing twenty experiments costs
+  twenty-one queries. The per-id method exists because status and conclusion
+  time live in their own columns and must override what the stored JSON record
+  says — a real requirement, since those are the two fields that move after an
+  experiment is written. The listing needs the same override, which is why it
+  was written this way, but it does not need a separate query to get it: the
+  same columns are available in the page query that already ran. Collapse the
+  listing to a single query while preserving the guarantee that the mutable
+  columns, not the frozen JSON, decide an experiment's reported status.
+constraints:
+  - Listing and per-id load must not diverge; both must report the column status, never the JSON status
+  - Ordering and limit semantics must not change
+  - An experiment whose record fails to parse must still surface as an error, not be skipped
+evaluation:
+  tests:
+    command: cargo test --workspace
+    timeout_secs: 1800
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    timeout_secs: 900
+  benchmark:
+    command: >-
+      cargo build --release -p forge-store >/dev/null 2>&1; t=""; for i in 1 2 3; do s=$(date +%s%N); cargo test --release -p forge-store --quiet >/dev/null 2>&1; e=$(date +%s%N); t="$t $(( (e-s)/1000000 ))"; done; med=$(echo $t | tr " " "\n" | sort -n | sed -n 2p); printf "{\"metrics\":{\"store_suite_wall_ms\":{\"value\":%s,\"unit\":\"ms\",\"direction\":\"minimize\"},\"store_suite_repeats\":{\"value\":3,\"unit\":\"runs\",\"direction\":\"neutral\"}}}" "$med" > .forge-metrics.json
+    metrics_file: .forge-metrics.json
+    timeout_secs: 2400
+protected_paths:
+  - validation/**
+  - crates/forge-policy/tests/**
+classification:
+  category: performance
+  language: rust
+  domain: policy
+  difficulty: small
+components:
+  - forge-store
+tags:
+  - validation-campaign
+  - campaign-v1
+  - policy-evidence
