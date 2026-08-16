@@ -1,0 +1,4098 @@
+{
+  "agents": {
+    "claude": {
+      "agent": "claude",
+      "integrity_events": 3,
+      "known_cost_usd": {
+        "cost_per_attempted_run": 2.50455237,
+        "cost_per_trustworthy_pass": 2.9465321999999996,
+        "coverage": 20,
+        "max": 6.7501185,
+        "mean": 2.50455237,
+        "median": 2.00951625,
+        "min": 0.3555841,
+        "n": 20,
+        "q1": 1.3558309249999998,
+        "q3": 2.9846180249999987,
+        "sum": 50.091047399999994
+      },
+      "n": 20,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 3,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 17
+      },
+      "pass_rate": 0.85,
+      "patch_deletions": {
+        "max": 84,
+        "mean": 27.0,
+        "median": 13.0,
+        "min": 0,
+        "n": 20,
+        "q1": 1.5,
+        "q3": 49.75
+      },
+      "patch_files_changed": {
+        "max": 9,
+        "mean": 2.95,
+        "median": 2.0,
+        "min": 1,
+        "n": 20,
+        "q1": 1.0,
+        "q3": 4.0
+      },
+      "patch_insertions": {
+        "max": 829,
+        "mean": 191.5,
+        "median": 145.0,
+        "min": 8,
+        "n": 20,
+        "q1": 94.25,
+        "q3": 207.25
+      },
+      "patch_lines_changed": {
+        "max": 831,
+        "mean": 218.5,
+        "median": 174.5,
+        "min": 8,
+        "n": 20,
+        "q1": 120.5,
+        "q3": 236.5
+      },
+      "provider_reported_input_tokens": {
+        "max": 15625371,
+        "mean": 4683810.25,
+        "median": 3462993.5,
+        "min": 528958,
+        "n": 20,
+        "q1": 2231421.25,
+        "q3": 5716116.5
+      },
+      "provider_reported_output_tokens": {
+        "max": 77601,
+        "mean": 29397.95,
+        "median": 28980.0,
+        "min": 2994,
+        "n": 20,
+        "q1": 16661.75,
+        "q3": 40346.25
+      },
+      "provider_reported_total_tokens": {
+        "max": 15685070,
+        "mean": 4713208.2,
+        "median": 3489364.0,
+        "min": 531952,
+        "n": 20,
+        "q1": 2247908.25,
+        "q3": 5757737.75,
+        "sum": 94264164
+      },
+      "runtime_ms": {
+        "max": 975967,
+        "mean": 484034.05,
+        "median": 456343.0,
+        "min": 159155,
+        "n": 20,
+        "q1": 336777.5,
+        "q3": 556039.25
+      }
+    },
+    "codex": {
+      "agent": "codex",
+      "integrity_events": 3,
+      "known_cost_usd": {
+        "cost_per_attempted_run": null,
+        "cost_per_trustworthy_pass": null,
+        "coverage": 0,
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "n": 20,
+      "outcomes": {
+        "FAIL": 1,
+        "INCONCLUSIVE": 2,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 17
+      },
+      "pass_rate": 0.85,
+      "patch_deletions": {
+        "max": 145,
+        "mean": 47.85,
+        "median": 18.0,
+        "min": 0,
+        "n": 20,
+        "q1": 3.25,
+        "q3": 104.25
+      },
+      "patch_files_changed": {
+        "max": 11,
+        "mean": 3.5,
+        "median": 2.5,
+        "min": 1,
+        "n": 20,
+        "q1": 1.0,
+        "q3": 4.0
+      },
+      "patch_insertions": {
+        "max": 851,
+        "mean": 244.2,
+        "median": 197.5,
+        "min": 4,
+        "n": 20,
+        "q1": 110.0,
+        "q3": 293.25
+      },
+      "patch_lines_changed": {
+        "max": 996,
+        "mean": 292.05,
+        "median": 202.0,
+        "min": 4,
+        "n": 20,
+        "q1": 129.0,
+        "q3": 389.0
+      },
+      "provider_reported_input_tokens": {
+        "max": 8975753,
+        "mean": 3013588.55,
+        "median": 3049105.5,
+        "min": 776704,
+        "n": 20,
+        "q1": 1641138.25,
+        "q3": 3629490.25
+      },
+      "provider_reported_output_tokens": {
+        "max": 29855,
+        "mean": 15561.7,
+        "median": 15628.0,
+        "min": 5201,
+        "n": 20,
+        "q1": 11940.5,
+        "q3": 18643.0
+      },
+      "provider_reported_total_tokens": {
+        "max": 9005608,
+        "mean": 3029150.25,
+        "median": 3067987.5,
+        "min": 781905,
+        "n": 20,
+        "q1": 1650808.5,
+        "q3": 3646714.25,
+        "sum": 60583005
+      },
+      "runtime_ms": {
+        "max": 961153,
+        "mean": 459672.6,
+        "median": 452258.5,
+        "min": 186730,
+        "n": 20,
+        "q1": 384871.5,
+        "q3": 538214.75
+      }
+    }
+  },
+  "benchmarks": {
+    "metrics": [
+      {
+        "absolute_delta": 120.0,
+        "claude": 1176.0,
+        "codex": 1056.0,
+        "direction": "minimize",
+        "metric": "store_suite_wall_ms",
+        "percentage_delta_vs_claude_baseline": 10.204081632653061,
+        "preregistered_five_percent_threshold_met": true,
+        "task_id": "T-VAL-016",
+        "unit": "ms",
+        "winner_by_direction": "codex"
+      },
+      {
+        "absolute_delta": 33.0,
+        "claude": 1071.0,
+        "codex": 1038.0,
+        "direction": "minimize",
+        "metric": "store_suite_wall_ms",
+        "percentage_delta_vs_claude_baseline": 3.081232492997199,
+        "preregistered_five_percent_threshold_met": false,
+        "task_id": "T-VAL-017",
+        "unit": "ms",
+        "winner_by_direction": "codex"
+      },
+      {
+        "absolute_delta": 54.0,
+        "claude": 1036.0,
+        "codex": 1090.0,
+        "direction": "minimize",
+        "metric": "store_suite_wall_ms",
+        "percentage_delta_vs_claude_baseline": 5.212355212355212,
+        "preregistered_five_percent_threshold_met": true,
+        "task_id": "T-VAL-018",
+        "unit": "ms",
+        "winner_by_direction": "claude"
+      }
+    ],
+    "winner_counts": {
+      "claude": 1,
+      "codex": 2
+    }
+  },
+  "categories": [
+    {
+      "agent": "claude",
+      "category": "debugging",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": 6.352987400000001,
+        "mean": 2.7030455000000004,
+        "median": 1.7668579000000002,
+        "min": 0.9254788,
+        "n": 4,
+        "q1": 1.4760376000000004,
+        "q3": 2.9938658,
+        "sum": 10.812182000000002
+      },
+      "known_cost_usd_median": 1.7668579000000002,
+      "known_cost_usd_sum": 10.812182000000002,
+      "median_patch_files_changed": 3.0,
+      "median_patch_lines_changed": 185.0,
+      "median_provider_reported_total_tokens": 2857598.0,
+      "median_runtime_ms": 447898.5,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 4
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 436,
+        "mean": 224.75,
+        "median": 185.0,
+        "min": 93,
+        "n": 4,
+        "q1": 154.5,
+        "q3": 255.25
+      },
+      "provider_reported_total_tokens": {
+        "max": 10319827,
+        "mean": 4372090.0,
+        "median": 2857598.0,
+        "min": 1453337,
+        "n": 4,
+        "q1": 2391742.25,
+        "q3": 4837945.75
+      },
+      "runtime_ms": {
+        "max": 916702,
+        "mean": 519915.5,
+        "median": 447898.5,
+        "min": 267163,
+        "n": 4,
+        "q1": 362197.0,
+        "q3": 605617.0
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "debugging",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 2.0,
+      "median_patch_lines_changed": 174.0,
+      "median_provider_reported_total_tokens": 2749614.5,
+      "median_runtime_ms": 434732.0,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 4
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 379,
+        "mean": 210.75,
+        "median": 174.0,
+        "min": 116,
+        "n": 4,
+        "q1": 134.75,
+        "q3": 250.0
+      },
+      "provider_reported_total_tokens": {
+        "max": 4827828,
+        "mean": 2940162.25,
+        "median": 2749614.5,
+        "min": 1433592,
+        "n": 4,
+        "q1": 2094877.5,
+        "q3": 3594899.25
+      },
+      "runtime_ms": {
+        "max": 567271,
+        "mean": 465804.0,
+        "median": 434732.0,
+        "min": 426481,
+        "n": 4,
+        "q1": 429901.0,
+        "q3": 470635.0
+      }
+    },
+    {
+      "agent": "claude",
+      "category": "feature",
+      "integrity_events": 2,
+      "known_cost_usd": {
+        "max": 6.7501185,
+        "mean": 3.340335775,
+        "median": 2.6102374499999996,
+        "min": 1.3907496999999998,
+        "n": 4,
+        "q1": 2.2152506499999993,
+        "q3": 3.7353225749999996,
+        "sum": 13.3613431
+      },
+      "known_cost_usd_median": 2.6102374499999996,
+      "known_cost_usd_sum": 13.3613431,
+      "median_patch_files_changed": 4.0,
+      "median_patch_lines_changed": 222.5,
+      "median_provider_reported_total_tokens": 5346358.5,
+      "median_runtime_ms": 423348.0,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 2,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 2
+      },
+      "pass_rate": 0.5,
+      "patch_lines_changed": {
+        "max": 535,
+        "mean": 286.5,
+        "median": 222.5,
+        "min": 166,
+        "n": 4,
+        "q1": 172.0,
+        "q3": 337.0
+      },
+      "provider_reported_total_tokens": {
+        "max": 15685070,
+        "mean": 7205957.0,
+        "median": 5346358.5,
+        "min": 2446041,
+        "n": 4,
+        "q1": 4620654.75,
+        "q3": 7931660.75
+      },
+      "runtime_ms": {
+        "max": 849804,
+        "mean": 502391.0,
+        "median": 423348.0,
+        "min": 313064,
+        "n": 4,
+        "q1": 385993.25,
+        "q3": 539745.75
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "feature",
+      "integrity_events": 3,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 4.0,
+      "median_patch_lines_changed": 333.0,
+      "median_provider_reported_total_tokens": 3456134.0,
+      "median_runtime_ms": 457126.0,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 1,
+        "INCONCLUSIVE": 2,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 1
+      },
+      "pass_rate": 0.25,
+      "patch_lines_changed": {
+        "max": 688,
+        "mean": 382.0,
+        "median": 333.0,
+        "min": 174,
+        "n": 4,
+        "q1": 233.25,
+        "q3": 481.75
+      },
+      "provider_reported_total_tokens": {
+        "max": 9005608,
+        "mean": 4552945.75,
+        "median": 3456134.0,
+        "min": 2293907,
+        "n": 4,
+        "q1": 3112986.5,
+        "q3": 4896093.25
+      },
+      "runtime_ms": {
+        "max": 961153,
+        "mean": 565429.25,
+        "median": 457126.0,
+        "min": 386312,
+        "n": 4,
+        "q1": 394564.25,
+        "q3": 627991.0
+      }
+    },
+    {
+      "agent": "claude",
+      "category": "refactor",
+      "integrity_events": 1,
+      "known_cost_usd": {
+        "max": 3.385301699999999,
+        "mean": 2.676403749999999,
+        "median": 3.034619349999999,
+        "min": 1.2510746,
+        "n": 4,
+        "q1": 2.513731174999999,
+        "q3": 3.197291924999999,
+        "sum": 10.705614999999996
+      },
+      "known_cost_usd_median": 3.034619349999999,
+      "known_cost_usd_sum": 10.705614999999996,
+      "median_patch_files_changed": 3.5,
+      "median_patch_lines_changed": 160.0,
+      "median_provider_reported_total_tokens": 6116933.5,
+      "median_runtime_ms": 488978.0,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 1,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 3
+      },
+      "pass_rate": 0.75,
+      "patch_lines_changed": {
+        "max": 209,
+        "mean": 139.25,
+        "median": 160.0,
+        "min": 28,
+        "n": 4,
+        "q1": 103.0,
+        "q3": 196.25
+      },
+      "provider_reported_total_tokens": {
+        "max": 6882965,
+        "mean": 5362239.5,
+        "median": 6116933.5,
+        "min": 2332126,
+        "n": 4,
+        "q1": 4631938.0,
+        "q3": 6847235.0
+      },
+      "runtime_ms": {
+        "max": 638609,
+        "mean": 468705.25,
+        "median": 488978.0,
+        "min": 258256,
+        "n": 4,
+        "q1": 405500.5,
+        "q3": 552182.75
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "refactor",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 4.0,
+      "median_patch_lines_changed": 420.5,
+      "median_provider_reported_total_tokens": 3571200.5,
+      "median_runtime_ms": 515138.0,
+      "n": 4,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 4
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 561,
+        "mean": 364.0,
+        "median": 420.5,
+        "min": 54,
+        "n": 4,
+        "q1": 299.25,
+        "q3": 485.25
+      },
+      "provider_reported_total_tokens": {
+        "max": 4020320,
+        "mean": 3037773.0,
+        "median": 3571200.5,
+        "min": 988371,
+        "n": 4,
+        "q1": 2597824.5,
+        "q3": 4011149.0
+      },
+      "runtime_ms": {
+        "max": 615898,
+        "mean": 467414.0,
+        "median": 515138.0,
+        "min": 223482,
+        "n": 4,
+        "q1": 405441.0,
+        "q3": 577111.0
+      }
+    },
+    {
+      "agent": "claude",
+      "category": "testing",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": 5.653771700000001,
+        "mean": 2.8684358000000003,
+        "median": 1.557858,
+        "min": 1.3936776999999998,
+        "n": 3,
+        "q1": 1.47576785,
+        "q3": 3.6058148500000002,
+        "sum": 8.605307400000001
+      },
+      "known_cost_usd_median": 1.557858,
+      "known_cost_usd_sum": 8.605307400000001,
+      "median_patch_files_changed": 1,
+      "median_patch_lines_changed": 225,
+      "median_provider_reported_total_tokens": 2410544,
+      "median_runtime_ms": 543609,
+      "n": 3,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 3
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 831,
+        "mean": 384.6666666666667,
+        "median": 225,
+        "min": 98,
+        "n": 3,
+        "q1": 161.5,
+        "q3": 528.0
+      },
+      "provider_reported_total_tokens": {
+        "max": 10907100,
+        "mean": 5104299.666666667,
+        "median": 2410544,
+        "min": 1995255,
+        "n": 3,
+        "q1": 2202899.5,
+        "q3": 6658822.0
+      },
+      "runtime_ms": {
+        "max": 975967,
+        "mean": 664587.0,
+        "median": 543609,
+        "min": 474185,
+        "n": 3,
+        "q1": 508897.0,
+        "q3": 759788.0
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "testing",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 1,
+      "median_patch_lines_changed": 197,
+      "median_provider_reported_total_tokens": 1385782,
+      "median_runtime_ms": 380550,
+      "n": 3,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 3
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 996,
+        "mean": 419.6666666666667,
+        "median": 197,
+        "min": 66,
+        "n": 3,
+        "q1": 131.5,
+        "q3": 596.5
+      },
+      "provider_reported_total_tokens": {
+        "max": 4545025,
+        "mean": 2400608.6666666665,
+        "median": 1385782,
+        "min": 1271019,
+        "n": 3,
+        "q1": 1328400.5,
+        "q3": 2965403.5
+      },
+      "runtime_ms": {
+        "max": 585078,
+        "mean": 402934.3333333333,
+        "median": 380550,
+        "min": 243175,
+        "n": 3,
+        "q1": 311862.5,
+        "q3": 482814.0
+      }
+    },
+    {
+      "agent": "claude",
+      "category": "performance",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": 2.1448739000000003,
+        "mean": 1.2716713333333334,
+        "median": 1.0884472,
+        "min": 0.5816928999999998,
+        "n": 3,
+        "q1": 0.8350700499999999,
+        "q3": 1.6166605500000002,
+        "sum": 3.815014
+      },
+      "known_cost_usd_median": 1.0884472,
+      "known_cost_usd_sum": 3.815014,
+      "median_patch_files_changed": 1,
+      "median_patch_lines_changed": 139,
+      "median_provider_reported_total_tokens": 1801235,
+      "median_runtime_ms": 344682,
+      "n": 3,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 3
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 298,
+        "mean": 156.0,
+        "median": 139,
+        "min": 31,
+        "n": 3,
+        "q1": 85.0,
+        "q3": 218.5
+      },
+      "provider_reported_total_tokens": {
+        "max": 3968076,
+        "mean": 2191972.0,
+        "median": 1801235,
+        "min": 806605,
+        "n": 3,
+        "q1": 1303920.0,
+        "q3": 2884655.5
+      },
+      "runtime_ms": {
+        "max": 458104,
+        "mean": 323462.6666666667,
+        "median": 344682,
+        "min": 167602,
+        "n": 3,
+        "q1": 256142.0,
+        "q3": 401393.0
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "performance",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 1,
+      "median_patch_lines_changed": 134,
+      "median_provider_reported_total_tokens": 2479351,
+      "median_runtime_ms": 473957,
+      "n": 3,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 3
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 361,
+        "mean": 207.0,
+        "median": 134,
+        "min": 126,
+        "n": 3,
+        "q1": 130.0,
+        "q3": 247.5
+      },
+      "provider_reported_total_tokens": {
+        "max": 3271519,
+        "mean": 2491361.3333333335,
+        "median": 2479351,
+        "min": 1723214,
+        "n": 3,
+        "q1": 2101282.5,
+        "q3": 2875435.0
+      },
+      "runtime_ms": {
+        "max": 479317,
+        "mean": 424590.3333333333,
+        "median": 473957,
+        "min": 320497,
+        "n": 3,
+        "q1": 397227.0,
+        "q3": 476637.0
+      }
+    },
+    {
+      "agent": "claude",
+      "category": "persistence",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": 2.4360017999999997,
+        "mean": 1.39579295,
+        "median": 1.39579295,
+        "min": 0.3555841,
+        "n": 2,
+        "q1": 0.8756885249999999,
+        "q3": 1.9158973749999995,
+        "sum": 2.7915859
+      },
+      "known_cost_usd_median": 1.39579295,
+      "known_cost_usd_sum": 2.7915859,
+      "median_patch_files_changed": 1.0,
+      "median_patch_lines_changed": 73.0,
+      "median_provider_reported_total_tokens": 2307101.5,
+      "median_runtime_ms": 376242.5,
+      "n": 2,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 2
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 138,
+        "mean": 73.0,
+        "median": 73.0,
+        "min": 8,
+        "n": 2,
+        "q1": 40.5,
+        "q3": 105.5
+      },
+      "provider_reported_total_tokens": {
+        "max": 4082251,
+        "mean": 2307101.5,
+        "median": 2307101.5,
+        "min": 531952,
+        "n": 2,
+        "q1": 1419526.75,
+        "q3": 3194676.25
+      },
+      "runtime_ms": {
+        "max": 593330,
+        "mean": 376242.5,
+        "median": 376242.5,
+        "min": 159155,
+        "n": 2,
+        "q1": 267698.75,
+        "q3": 484786.25
+      }
+    },
+    {
+      "agent": "codex",
+      "category": "persistence",
+      "integrity_events": 0,
+      "known_cost_usd": {
+        "max": null,
+        "mean": null,
+        "median": null,
+        "min": null,
+        "n": 0,
+        "q1": null,
+        "q3": null,
+        "sum": null
+      },
+      "known_cost_usd_median": null,
+      "known_cost_usd_sum": null,
+      "median_patch_files_changed": 2.5,
+      "median_patch_lines_changed": 67.0,
+      "median_provider_reported_total_tokens": 1891785.5,
+      "median_runtime_ms": 358144.5,
+      "n": 2,
+      "outcomes": {
+        "FAIL": 0,
+        "INCONCLUSIVE": 0,
+        "INFRASTRUCTURE_EXCLUDED": 0,
+        "NO_CHANGE": 0,
+        "PASS": 2
+      },
+      "pass_rate": 1.0,
+      "patch_lines_changed": {
+        "max": 130,
+        "mean": 67.0,
+        "median": 67.0,
+        "min": 4,
+        "n": 2,
+        "q1": 35.5,
+        "q3": 98.5
+      },
+      "provider_reported_total_tokens": {
+        "max": 3001666,
+        "mean": 1891785.5,
+        "median": 1891785.5,
+        "min": 781905,
+        "n": 2,
+        "q1": 1336845.25,
+        "q3": 2446725.75
+      },
+      "runtime_ms": {
+        "max": 529559,
+        "mean": 358144.5,
+        "median": 358144.5,
+        "min": 186730,
+        "n": 2,
+        "q1": 272437.25,
+        "q3": 443851.75
+      }
+    }
+  ],
+  "codex_accounting": {
+    "cache_hit_ratio_per_run": {
+      "max": 0.972176484803002,
+      "mean": 0.9492014183350838,
+      "median": 0.9541202815419141,
+      "min": 0.9206991232940913,
+      "n": 20,
+      "q1": 0.937396940071247,
+      "q3": 0.9628542405475817
+    },
+    "cache_hit_ratio_pooled": 0.9558369207369068,
+    "coverage": {
+      "cached_input_known": 20,
+      "credit_equivalent_usd_known": 0,
+      "derived_credits_known": 20,
+      "input_output_tokens_known": 20,
+      "known_billed_usd": 0,
+      "model_known": 20,
+      "provider_credits_known": 0,
+      "runs": 20
+    },
+    "credit_equivalent_usd": null,
+    "credits_by_category": {
+      "debugging": {
+        "max": 93.22665,
+        "mean": 64.65848125,
+        "median": 64.730425,
+        "min": 35.946425,
+        "n": 4,
+        "q1": 53.8197875,
+        "q3": 75.56911875,
+        "sum": 258.633925
+      },
+      "feature": {
+        "max": 162.683575,
+        "mean": 87.58131875,
+        "median": 68.464775,
+        "min": 50.71215,
+        "n": 4,
+        "q1": 63.901593749999996,
+        "q3": 92.1445,
+        "sum": 350.325275
+      },
+      "performance": {
+        "max": 66.081275,
+        "mean": 52.80533333333333,
+        "median": 55.104375,
+        "min": 37.23035,
+        "n": 3,
+        "q1": 46.167362499999996,
+        "q3": 60.592825000000005,
+        "sum": 158.416
+      },
+      "persistence": {
+        "max": 66.30345,
+        "mean": 43.052499999999995,
+        "median": 43.052499999999995,
+        "min": 19.80155,
+        "n": 2,
+        "q1": 31.427025,
+        "q3": 54.677974999999996,
+        "sum": 86.10499999999999
+      },
+      "refactor": {
+        "max": 84.828075,
+        "mean": 67.53031874999999,
+        "median": 79.5629125,
+        "min": 26.167375,
+        "n": 4,
+        "q1": 64.00138749999999,
+        "q3": 83.09184375,
+        "sum": 270.12127499999997
+      },
+      "testing": {
+        "max": 94.10875,
+        "mean": 54.224066666666666,
+        "median": 38.180275,
+        "min": 30.383175,
+        "n": 3,
+        "q1": 34.281725,
+        "q3": 66.1445125,
+        "sum": 162.6722
+      }
+    },
+    "credits_per_trustworthy_pass": 75.66315735294117,
+    "derivation_blockers": {},
+    "derived_credits": {
+      "max": 162.683575,
+      "mean": 64.31368375,
+      "median": 66.1923625,
+      "min": 19.80155,
+      "n": 20,
+      "q1": 37.94279375,
+      "q3": 78.08781875,
+      "sum": 1286.273675
+    },
+    "known_billed_usd": null,
+    "models": {
+      "gpt-5.6-sol": 20
+    },
+    "rate_card_ids": [
+      "openai-chatgpt-codex-credits-2026-08-15"
+    ],
+    "raw_usage": {
+      "cache_write_input_tokens": {
+        "max": 0,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0,
+        "n": 20,
+        "q1": 0.0,
+        "q3": 0.0
+      },
+      "cached_input_tokens": {
+        "max": 8726016,
+        "mean": 2880499.2,
+        "median": 2878592.0,
+        "min": 721664,
+        "n": 20,
+        "q1": 1559872.0,
+        "q3": 3505600.0
+      },
+      "input_tokens": {
+        "max": 8975753,
+        "mean": 3013588.55,
+        "median": 3049105.5,
+        "min": 776704,
+        "n": 20,
+        "q1": 1641138.25,
+        "q3": 3629490.25
+      },
+      "output_tokens": {
+        "max": 29855,
+        "mean": 15561.7,
+        "median": 15628.0,
+        "min": 5201,
+        "n": 20,
+        "q1": 11940.5,
+        "q3": 18643.0
+      },
+      "provider_total_tokens": {
+        "max": 9005608,
+        "mean": 3029150.25,
+        "median": 3067987.5,
+        "min": 781905,
+        "n": 20,
+        "q1": 1650808.5,
+        "q3": 3646714.25
+      },
+      "reasoning_output_tokens": {
+        "max": 10866,
+        "mean": 6617.95,
+        "median": 6649.5,
+        "min": 2372,
+        "n": 20,
+        "q1": 4289.5,
+        "q3": 9075.5
+      },
+      "uncached_input_tokens": {
+        "max": 249737,
+        "mean": 133089.35,
+        "median": 125915.0,
+        "min": 55040,
+        "n": 20,
+        "q1": 97602.25,
+        "q3": 167727.75
+      }
+    }
+  },
+  "completeness": {
+    "agent_counts": {
+      "claude": 20,
+      "codex": 20
+    },
+    "base_commits": [
+      "781b32fab791d1d4f839bfb1e5988f4e56150048"
+    ],
+    "campaign_tagged_attempts": 40,
+    "claude_versions": [
+      "2.1.223 (Claude Code)"
+    ],
+    "codex_versions": [
+      "codex-cli 0.147.0"
+    ],
+    "complete_pairs": 20,
+    "configuration_strata": {
+      "claude": {
+        "agent_config": {
+          "agent_id": "claude",
+          "harness": "claude-code",
+          "timeout_secs": 3600
+        },
+        "forge_config_fingerprint": "2ba4b27122dfc28a"
+      },
+      "codex": {
+        "agent_config": {
+          "agent_id": "codex",
+          "harness": "codex-cli",
+          "timeout_secs": 3600
+        },
+        "forge_config_fingerprint": "79da454c7d11ddbb"
+      }
+    },
+    "duplicate_exports": 0,
+    "environment_count": 20,
+    "forge_versions": [
+      "forge 0.1.0"
+    ],
+    "included_runs": 40,
+    "infrastructure_excluded": 0,
+    "isolation_strategy": "independent-clone-v1",
+    "live_provenance": 40,
+    "malformed_records": 0,
+    "missing_exports": 0,
+    "participant_config_sha256": "70e13a1eb9400f1d88247b15439453ccad987c413213616cead380d7155ebdde",
+    "point_exports": 40,
+    "point_exports_match_master": true,
+    "records": 40,
+    "run_id_counts": {
+      "R-0001": 40
+    },
+    "run_id_scope_note": "run_id is participant-ledger-local; the composite evidence key is globally unique",
+    "unique_task_revisions": 20,
+    "unique_tasks": 20,
+    "unknown_outcomes": [],
+    "valid": true
+  },
+  "follow_on_readiness": {
+    "context_experiment": {
+      "assessment": "registered and executable, but Tier 1 has a high PASS ceiling; resource deltas may be more informative than PASS deltas",
+      "estimated_additional_runs": 8,
+      "tasks": [
+        "T-VAL-004",
+        "T-VAL-010",
+        "T-VAL-012",
+        "T-VAL-014"
+      ],
+      "tier1_attempts": 8,
+      "trustworthy_passes_in_tier1": 7
+    },
+    "deepseek": {
+      "baseline_commit": "781b32fab791d1d4f839bfb1e5988f4e56150048",
+      "recommendation": "register a separate 20-run extension after adapter/evaluator-layout review",
+      "runs": 20,
+      "separate_from_tier1": true,
+      "tests": [
+        "provider neutrality",
+        "evaluator portability",
+        "new-agent routing cold start",
+        "evidence accumulation",
+        "Claude/Codex-specific assumptions"
+      ]
+    },
+    "longitudinal_health": {
+      "accepted_dogfood_hardening_merged_in_v1_0_1": true,
+      "accepted_tier1_candidate_changes_merged": 0,
+      "assessment": "pending; no baseline snapshot or three-point accepted commit sequence exists",
+      "baseline_snapshot_exists": false,
+      "meaningful_trend_available": false,
+      "recorded_health_snapshots": 0
+    },
+    "policy_optimization": {
+      "assessment": "Tier 1 predates policy control; it cannot populate a control/candidate policy comparison",
+      "comparable_observations_per_arm_required": 8,
+      "eligible_policy_controlled_observations": 0,
+      "excluded_manual_or_missing_policy_identity": 40,
+      "health_observation_pending_after_arm_readiness": true,
+      "health_snapshots_required": 3,
+      "likely_recommendation_now": "insufficient_evidence",
+      "tier1_policy_evidence_tagged_runs": 12
+    },
+    "team_experiment": {
+      "assessment": "ready as a resource/benchmark comparison; the strongest observed single agent passed every candidate task",
+      "estimated_additional_team_runs": 5,
+      "strongest_single_agent_baselines": [
+        {
+          "claude_outcome": "PASS",
+          "codex_outcome": "PASS",
+          "strongest_single_agent": "claude/codex",
+          "task_id": "T-VAL-009"
+        },
+        {
+          "claude_outcome": "PASS",
+          "codex_outcome": "PASS",
+          "strongest_single_agent": "claude",
+          "task_id": "T-VAL-010"
+        },
+        {
+          "claude_outcome": "INCONCLUSIVE",
+          "codex_outcome": "PASS",
+          "strongest_single_agent": "codex",
+          "task_id": "T-VAL-012"
+        },
+        {
+          "claude_outcome": "PASS",
+          "codex_outcome": "PASS",
+          "strongest_single_agent": "codex",
+          "task_id": "T-VAL-014"
+        },
+        {
+          "claude_outcome": "PASS",
+          "codex_outcome": "PASS",
+          "strongest_single_agent": "codex",
+          "task_id": "T-VAL-016"
+        }
+      ],
+      "tasks": [
+        "T-VAL-009",
+        "T-VAL-010",
+        "T-VAL-012",
+        "T-VAL-014",
+        "T-VAL-016"
+      ]
+    },
+    "tier2": {
+      "estimated_additional_runs": 6,
+      "reason": "Repeat only the preregistered performance task whose 10.2% benchmark separation could plausibly move under run-to-run noise. Do not repeat T-VAL-021 unchanged because its protected-path collision is a design issue, and the other preregistered tasks were paired PASSes without a conclusion-changing ambiguity.",
+      "recommendation": "RUN A REDUCED TIER 2",
+      "tasks": [
+        "T-VAL-016"
+      ]
+    }
+  },
+  "integrity": {
+    "event_count": 6,
+    "events": [
+      {
+        "agent": "codex",
+        "custom_evaluators": [
+          {
+            "name": "export_accepts_filters",
+            "verdict": "fail"
+          }
+        ],
+        "evaluation_verdict": "fail",
+        "formal_outcome": "FAIL",
+        "lint_passed": false,
+        "protected_paths": [
+          "crates/forge-cli/tests/run.rs"
+        ],
+        "task_id": "T-VAL-006",
+        "tests_passed": false
+      },
+      {
+        "agent": "claude",
+        "custom_evaluators": [],
+        "evaluation_verdict": "pass",
+        "formal_outcome": "INCONCLUSIVE",
+        "lint_passed": true,
+        "protected_paths": [
+          "crates/forge-cli/tests/policy.rs"
+        ],
+        "task_id": "T-VAL-012",
+        "tests_passed": true
+      },
+      {
+        "agent": "claude",
+        "custom_evaluators": [
+          {
+            "name": "experiment_inspection_reachable",
+            "verdict": "pass"
+          }
+        ],
+        "evaluation_verdict": "pass",
+        "formal_outcome": "INCONCLUSIVE",
+        "lint_passed": true,
+        "protected_paths": [
+          "crates/forge-cli/tests/run.rs"
+        ],
+        "task_id": "T-VAL-021",
+        "tests_passed": true
+      },
+      {
+        "agent": "codex",
+        "custom_evaluators": [
+          {
+            "name": "experiment_inspection_reachable",
+            "verdict": "pass"
+          }
+        ],
+        "evaluation_verdict": "pass",
+        "formal_outcome": "INCONCLUSIVE",
+        "lint_passed": true,
+        "protected_paths": [
+          "crates/forge-cli/tests/run.rs"
+        ],
+        "task_id": "T-VAL-021",
+        "tests_passed": true
+      },
+      {
+        "agent": "claude",
+        "custom_evaluators": [
+          {
+            "name": "preview_creates_no_run_record",
+            "verdict": "pass"
+          }
+        ],
+        "evaluation_verdict": "pass",
+        "formal_outcome": "INCONCLUSIVE",
+        "lint_passed": true,
+        "protected_paths": [
+          "crates/forge-cli/tests/run.rs"
+        ],
+        "task_id": "T-VAL-022",
+        "tests_passed": true
+      },
+      {
+        "agent": "codex",
+        "custom_evaluators": [
+          {
+            "name": "preview_creates_no_run_record",
+            "verdict": "pass"
+          }
+        ],
+        "evaluation_verdict": "pass",
+        "formal_outcome": "INCONCLUSIVE",
+        "lint_passed": true,
+        "protected_paths": [
+          "crates/forge-cli/tests/run.rs"
+        ],
+        "task_id": "T-VAL-022",
+        "tests_passed": true
+      }
+    ],
+    "green_evaluator_but_non_pass": [
+      {
+        "agent": "claude",
+        "outcome": "INCONCLUSIVE",
+        "task_id": "T-VAL-012"
+      },
+      {
+        "agent": "claude",
+        "outcome": "INCONCLUSIVE",
+        "task_id": "T-VAL-021"
+      },
+      {
+        "agent": "codex",
+        "outcome": "INCONCLUSIVE",
+        "task_id": "T-VAL-021"
+      },
+      {
+        "agent": "claude",
+        "outcome": "INCONCLUSIVE",
+        "task_id": "T-VAL-022"
+      },
+      {
+        "agent": "codex",
+        "outcome": "INCONCLUSIVE",
+        "task_id": "T-VAL-022"
+      }
+    ],
+    "green_evaluator_but_non_pass_count": 5,
+    "post_hoc_qualitative_classifications": {
+      "T-VAL-021": "likely benchmark-design collision",
+      "T-VAL-022": "likely benchmark-design collision"
+    }
+  },
+  "learned_routing_value": "did not demonstrate added selection value because it abstained on every task",
+  "metadata": {
+    "analysis_tool_commit": null,
+    "analysis_tool_sha256": "fb9927de39e30cc53a3a46dad7b6109e77caf95d8a2fcc7f2fb84f75a9a5d021",
+    "analysis_tool_version": "tier1-post-campaign-v1",
+    "analysis_tool_working_tree_base_commit": "444bf2d04407759a6a97f293bed2ce03cd9269ed",
+    "analysis_tool_working_tree_dirty": true,
+    "baseline_commit": "781b32fab791d1d4f839bfb1e5988f4e56150048",
+    "baseline_tag": "v1.0.1",
+    "campaign_date_range": {
+      "first_created_at": "2026-08-12T22:36:48.881550Z",
+      "last_finished_at": "2026-08-16T07:02:16.235903Z"
+    },
+    "campaign_id": "forge-v1-2026-08",
+    "campaign_specification_commit": "a111864145fea8ef182f410e15425cf35c0155e1",
+    "campaign_specification_tag": "validation-2026-08",
+    "campaign_version": 2,
+    "generated_at": "2026-08-16T07:27:51.709350Z",
+    "master_export_path": ".forge/validation-archive/tier1-master.jsonl",
+    "master_export_sha256": "b283ef15c92f3c4c54f104900234638c2c46b2919a2f13a14f7435f3b27903b9",
+    "percentile_method": "linear R-7",
+    "rate_card_ids": [
+      "openai-chatgpt-codex-credits-2026-08-15"
+    ]
+  },
+  "paired_outcome_matrix": {
+    "both_non_pass": 2,
+    "both_pass": 16,
+    "claude_pass_codex_non_pass": 1,
+    "codex_pass_claude_non_pass": 1,
+    "subtypes": {
+      "claude=INCONCLUSIVE,codex=INCONCLUSIVE": 2,
+      "claude=INCONCLUSIVE,codex=PASS": 1,
+      "claude=PASS,codex=FAIL": 1,
+      "claude=PASS,codex=PASS": 16
+    }
+  },
+  "paired_results": [
+    {
+      "benchmark_results": [],
+      "category": "debugging",
+      "claude_input_tokens": 10279805,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 40022,
+      "claude_patch_deletions": 37,
+      "claude_patch_files": 7,
+      "claude_patch_insertions": 399,
+      "claude_patch_lines": 436,
+      "claude_runtime_ms": 916702,
+      "claude_total_tokens": 10319827,
+      "codex_input_tokens": 4809630,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 18198,
+      "codex_patch_deletions": 73,
+      "codex_patch_files": 7,
+      "codex_patch_insertions": 306,
+      "codex_patch_lines": 379,
+      "codex_runtime_ms": 567271,
+      "codex_total_tokens": 4827828,
+      "cutoff": "2026-08-12T22:36:48.881550Z",
+      "patch_lines_delta_claude_minus_codex": 57,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "codex",
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 349431,
+      "task_id": "T-VAL-001",
+      "task_revision_id": "TR-efc88ee1e187c2fa34ba07f301b2b6bc593d5ac6692b0d968f60c729d3616fc8"
+    },
+    {
+      "benchmark_results": [],
+      "category": "debugging",
+      "claude_input_tokens": 2669391,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 35153,
+      "claude_patch_deletions": 10,
+      "claude_patch_files": 2,
+      "claude_patch_insertions": 83,
+      "claude_patch_lines": 93,
+      "claude_runtime_ms": 501922,
+      "claude_total_tokens": 2704544,
+      "codex_input_tokens": 2299061,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 16245,
+      "codex_patch_deletions": 5,
+      "codex_patch_files": 2,
+      "codex_patch_insertions": 111,
+      "codex_patch_lines": 116,
+      "codex_runtime_ms": 426481,
+      "codex_total_tokens": 2315306,
+      "cutoff": "2026-08-12T23:08:36.698111Z",
+      "patch_lines_delta_claude_minus_codex": -23,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 75441,
+      "task_id": "T-VAL-002",
+      "task_revision_id": "TR-75c29096c945237b6501bfbb85343eb4072125b5a32ccb63a5ea147255542522"
+    },
+    {
+      "benchmark_results": [],
+      "category": "debugging",
+      "claude_input_tokens": 2987546,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 23106,
+      "claude_patch_deletions": 4,
+      "claude_patch_files": 4,
+      "claude_patch_insertions": 191,
+      "claude_patch_lines": 195,
+      "claude_runtime_ms": 393875,
+      "claude_total_tokens": 3010652,
+      "codex_input_tokens": 3170447,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 13476,
+      "codex_patch_deletions": 4,
+      "codex_patch_files": 2,
+      "codex_patch_insertions": 203,
+      "codex_patch_lines": 207,
+      "codex_runtime_ms": 431041,
+      "codex_total_tokens": 3183923,
+      "cutoff": "2026-08-12T23:29:47.122546Z",
+      "patch_lines_delta_claude_minus_codex": -12,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -37166,
+      "task_id": "T-VAL-003",
+      "task_revision_id": "TR-5af090a1bfd28ee93f733d617cb149ac79943f317db1778683505610c7e6451e"
+    },
+    {
+      "benchmark_results": [],
+      "category": "debugging",
+      "claude_input_tokens": 1440841,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 12496,
+      "claude_patch_deletions": 0,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 175,
+      "claude_patch_lines": 175,
+      "claude_runtime_ms": 267163,
+      "claude_total_tokens": 1453337,
+      "codex_input_tokens": 1421383,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 12209,
+      "codex_patch_deletions": 0,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 141,
+      "codex_patch_lines": 141,
+      "codex_runtime_ms": 438423,
+      "codex_total_tokens": 1433592,
+      "cutoff": "2026-08-12T23:47:57.653433Z",
+      "patch_lines_delta_claude_minus_codex": 34,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "claude",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -171260,
+      "task_id": "T-VAL-004",
+      "task_revision_id": "TR-f91a580e1cb34d8ce17d0f311558059ba558ff8ab2e8b2202ef0d2c6d4284b05"
+    },
+    {
+      "benchmark_results": [],
+      "category": "feature",
+      "claude_input_tokens": 2429094,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 16947,
+      "claude_patch_deletions": 66,
+      "claude_patch_files": 4,
+      "claude_patch_insertions": 205,
+      "claude_patch_lines": 271,
+      "claude_runtime_ms": 313064,
+      "claude_total_tokens": 2446041,
+      "codex_input_tokens": 3510767,
+      "codex_integrity": "modified",
+      "codex_integrity_paths": [
+        "crates/forge-cli/tests/run.rs"
+      ],
+      "codex_outcome": "FAIL",
+      "codex_output_tokens": 15488,
+      "codex_patch_deletions": 124,
+      "codex_patch_files": 4,
+      "codex_patch_insertions": 289,
+      "codex_patch_lines": 413,
+      "codex_runtime_ms": 516937,
+      "codex_total_tokens": 3526255,
+      "cutoff": "2026-08-13T00:03:26.938643Z",
+      "patch_lines_delta_claude_minus_codex": -142,
+      "preregistered_pair_reason": "pass_beats_non_pass",
+      "preregistered_pair_winner": "claude",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -203873,
+      "task_id": "T-VAL-006",
+      "task_revision_id": "TR-30824a65f834e9734651389b9966ade1c8e4ea74748316aba5f24a5d2a7c8a4f"
+    },
+    {
+      "benchmark_results": [],
+      "category": "feature",
+      "claude_input_tokens": 5326064,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 21127,
+      "claude_patch_deletions": 5,
+      "claude_patch_files": 2,
+      "claude_patch_insertions": 161,
+      "claude_patch_lines": 166,
+      "claude_runtime_ms": 410303,
+      "claude_total_tokens": 5347191,
+      "codex_input_tokens": 3373515,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 12498,
+      "codex_patch_deletions": 6,
+      "codex_patch_files": 3,
+      "codex_patch_insertions": 168,
+      "codex_patch_lines": 174,
+      "codex_runtime_ms": 386312,
+      "codex_total_tokens": 3386013,
+      "cutoff": "2026-08-15T23:42:22.958892Z",
+      "patch_lines_delta_claude_minus_codex": -8,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 23991,
+      "task_id": "T-VAL-008",
+      "task_revision_id": "TR-0e253d15f355ac9e243a787f4ac5be39ca19f49a12ada1116ebe6ae536a5b3b3"
+    },
+    {
+      "benchmark_results": [],
+      "category": "refactor",
+      "claude_input_tokens": 5356820,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 41722,
+      "claude_patch_deletions": 46,
+      "claude_patch_files": 2,
+      "claude_patch_insertions": 82,
+      "claude_patch_lines": 128,
+      "claude_runtime_ms": 523374,
+      "claude_total_tokens": 5398542,
+      "codex_input_tokens": 3115905,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 18404,
+      "codex_patch_deletions": 123,
+      "codex_patch_files": 2,
+      "codex_patch_insertions": 438,
+      "codex_patch_lines": 561,
+      "codex_runtime_ms": 466094,
+      "codex_total_tokens": 3134309,
+      "cutoff": "2026-08-16T00:00:40.790166Z",
+      "patch_lines_delta_claude_minus_codex": -433,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 57280,
+      "task_id": "T-VAL-009",
+      "task_revision_id": "TR-fbb1d8035c5abcaf113283780d19c6c6a0ed52ec6746ba16a84f61d000638033"
+    },
+    {
+      "benchmark_results": [],
+      "category": "refactor",
+      "claude_input_tokens": 6853896,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 29069,
+      "claude_patch_deletions": 75,
+      "claude_patch_files": 9,
+      "claude_patch_insertions": 134,
+      "claude_patch_lines": 209,
+      "claude_runtime_ms": 454582,
+      "claude_total_tokens": 6882965,
+      "codex_input_tokens": 3985660,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 22432,
+      "codex_patch_deletions": 134,
+      "codex_patch_files": 10,
+      "codex_patch_insertions": 247,
+      "codex_patch_lines": 381,
+      "codex_runtime_ms": 564182,
+      "codex_total_tokens": 4008092,
+      "cutoff": "2026-08-16T00:18:51.424945Z",
+      "patch_lines_delta_claude_minus_codex": -172,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "claude",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -109600,
+      "task_id": "T-VAL-010",
+      "task_revision_id": "TR-28a91700681b44093f5bf7ed2672f72e2e9c7fb29e8ccbb72e7647ad18b7cffc"
+    },
+    {
+      "benchmark_results": [],
+      "category": "refactor",
+      "claude_input_tokens": 6794006,
+      "claude_integrity": "modified",
+      "claude_integrity_paths": [
+        "crates/forge-cli/tests/policy.rs"
+      ],
+      "claude_outcome": "INCONCLUSIVE",
+      "claude_output_tokens": 41319,
+      "claude_patch_deletions": 61,
+      "claude_patch_files": 5,
+      "claude_patch_insertions": 131,
+      "claude_patch_lines": 192,
+      "claude_runtime_ms": 638609,
+      "claude_total_tokens": 6835325,
+      "codex_input_tokens": 3997413,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 22907,
+      "codex_patch_deletions": 99,
+      "codex_patch_files": 6,
+      "codex_patch_insertions": 361,
+      "codex_patch_lines": 460,
+      "codex_runtime_ms": 615898,
+      "codex_total_tokens": 4020320,
+      "cutoff": "2026-08-16T00:37:29.909606Z",
+      "patch_lines_delta_claude_minus_codex": -268,
+      "preregistered_pair_reason": "pass_beats_non_pass",
+      "preregistered_pair_winner": "codex",
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 22711,
+      "task_id": "T-VAL-012",
+      "task_revision_id": "TR-ca5d91f8cc36230e5fbf60a5f704ab702da5dccb5ccc5278de95915b1f402a66"
+    },
+    {
+      "benchmark_results": [],
+      "category": "refactor",
+      "claude_input_tokens": 2320755,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 11371,
+      "claude_patch_deletions": 15,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 13,
+      "claude_patch_lines": 28,
+      "claude_runtime_ms": 258256,
+      "claude_total_tokens": 2332126,
+      "codex_input_tokens": 981515,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 6856,
+      "codex_patch_deletions": 15,
+      "codex_patch_files": 2,
+      "codex_patch_insertions": 39,
+      "codex_patch_lines": 54,
+      "codex_runtime_ms": 223482,
+      "codex_total_tokens": 988371,
+      "cutoff": "2026-08-16T01:00:50.075956Z",
+      "patch_lines_delta_claude_minus_codex": -26,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 34774,
+      "task_id": "T-VAL-023",
+      "task_revision_id": "TR-310c89dce32e996b77d4da17d0f4e18ce1bdc683003b7e8c66f8cc4eeabee6ac"
+    },
+    {
+      "benchmark_results": [],
+      "category": "testing",
+      "claude_input_tokens": 2389939,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 20605,
+      "claude_patch_deletions": 0,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 98,
+      "claude_patch_lines": 98,
+      "claude_runtime_ms": 543609,
+      "claude_total_tokens": 2410544,
+      "codex_input_tokens": 1263075,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 7944,
+      "codex_patch_deletions": 0,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 66,
+      "codex_patch_lines": 66,
+      "codex_runtime_ms": 243175,
+      "codex_total_tokens": 1271019,
+      "cutoff": "2026-08-16T01:13:41.879310Z",
+      "patch_lines_delta_claude_minus_codex": 32,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "codex",
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 300434,
+      "task_id": "T-VAL-013",
+      "task_revision_id": "TR-9e0adbac7b4092205b4c6656412a8db5e4d81e2505da59e54f015bb991308870"
+    },
+    {
+      "benchmark_results": [],
+      "category": "testing",
+      "claude_input_tokens": 10829499,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 77601,
+      "claude_patch_deletions": 2,
+      "claude_patch_files": 3,
+      "claude_patch_insertions": 829,
+      "claude_patch_lines": 831,
+      "claude_runtime_ms": 975967,
+      "claude_total_tokens": 10907100,
+      "codex_input_tokens": 4520096,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 24929,
+      "codex_patch_deletions": 145,
+      "codex_patch_files": 4,
+      "codex_patch_insertions": 851,
+      "codex_patch_lines": 996,
+      "codex_runtime_ms": 585078,
+      "codex_total_tokens": 4545025,
+      "cutoff": "2026-08-16T01:30:43.909799Z",
+      "patch_lines_delta_claude_minus_codex": -165,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "codex",
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 390889,
+      "task_id": "T-VAL-014",
+      "task_revision_id": "TR-3ae28df5ae3404ae886feba742ea020afd2a99546cb442f7bddd137fb6a879ae"
+    },
+    {
+      "benchmark_results": [],
+      "category": "testing",
+      "claude_input_tokens": 1963420,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 31835,
+      "claude_patch_deletions": 0,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 225,
+      "claude_patch_lines": 225,
+      "claude_runtime_ms": 474185,
+      "claude_total_tokens": 1995255,
+      "codex_input_tokens": 1373201,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 12581,
+      "codex_patch_deletions": 5,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 192,
+      "codex_patch_lines": 197,
+      "codex_runtime_ms": 380550,
+      "codex_total_tokens": 1385782,
+      "cutoff": "2026-08-16T04:45:59.702314Z",
+      "patch_lines_delta_claude_minus_codex": 28,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 93635,
+      "task_id": "T-VAL-015",
+      "task_revision_id": "TR-68dd058de30b7d25b6b963d292f15ccfd4d8cd4382061556d4779468c52234f6"
+    },
+    {
+      "benchmark_results": [
+        {
+          "absolute_delta": 120.0,
+          "claude": 1176.0,
+          "codex": 1056.0,
+          "direction": "minimize",
+          "metric": "store_suite_wall_ms",
+          "percentage_delta_vs_claude_baseline": 10.204081632653061,
+          "preregistered_five_percent_threshold_met": true,
+          "task_id": "T-VAL-016",
+          "unit": "ms",
+          "winner_by_direction": "codex"
+        }
+      ],
+      "category": "performance",
+      "claude_input_tokens": 3938441,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 29635,
+      "claude_patch_deletions": 84,
+      "claude_patch_files": 3,
+      "claude_patch_insertions": 214,
+      "claude_patch_lines": 298,
+      "claude_runtime_ms": 458104,
+      "claude_total_tokens": 3968076,
+      "codex_input_tokens": 2462427,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 16924,
+      "codex_patch_deletions": 120,
+      "codex_patch_files": 3,
+      "codex_patch_insertions": 241,
+      "codex_patch_lines": 361,
+      "codex_runtime_ms": 479317,
+      "codex_total_tokens": 2479351,
+      "cutoff": "2026-08-16T05:01:43.725749Z",
+      "patch_lines_delta_claude_minus_codex": -63,
+      "preregistered_pair_reason": "declared_benchmark_at_least_five_percent",
+      "preregistered_pair_winner": "codex",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -21213,
+      "task_id": "T-VAL-016",
+      "task_revision_id": "TR-cb7aa87f7b73a3cb5a088bf5daabec91f4501341fadf93ca0d0e6e0535df9951"
+    },
+    {
+      "benchmark_results": [
+        {
+          "absolute_delta": 33.0,
+          "claude": 1071.0,
+          "codex": 1038.0,
+          "direction": "minimize",
+          "metric": "store_suite_wall_ms",
+          "percentage_delta_vs_claude_baseline": 3.081232492997199,
+          "preregistered_five_percent_threshold_met": false,
+          "task_id": "T-VAL-017",
+          "unit": "ms",
+          "winner_by_direction": "codex"
+        }
+      ],
+      "category": "performance",
+      "claude_input_tokens": 802977,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 3628,
+      "claude_patch_deletions": 11,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 20,
+      "claude_patch_lines": 31,
+      "claude_runtime_ms": 167602,
+      "claude_total_tokens": 806605,
+      "codex_input_tokens": 1714390,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 8824,
+      "codex_patch_deletions": 27,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 107,
+      "codex_patch_lines": 134,
+      "codex_runtime_ms": 320497,
+      "codex_total_tokens": 1723214,
+      "cutoff": "2026-08-16T05:19:48.658372Z",
+      "patch_lines_delta_claude_minus_codex": -103,
+      "preregistered_pair_reason": "runtime_at_least_twenty_percent",
+      "preregistered_pair_winner": "claude",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -152895,
+      "task_id": "T-VAL-017",
+      "task_revision_id": "TR-c687bff13d0477f8a6c4e49b8e6ddb04db0a34fef12d4c1eb2b261875fa63213"
+    },
+    {
+      "benchmark_results": [
+        {
+          "absolute_delta": 54.0,
+          "claude": 1036.0,
+          "codex": 1090.0,
+          "direction": "minimize",
+          "metric": "store_suite_wall_ms",
+          "percentage_delta_vs_claude_baseline": 5.212355212355212,
+          "preregistered_five_percent_threshold_met": true,
+          "task_id": "T-VAL-018",
+          "unit": "ms",
+          "winner_by_direction": "claude"
+        }
+      ],
+      "category": "performance",
+      "claude_input_tokens": 1785429,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 15806,
+      "claude_patch_deletions": 39,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 100,
+      "claude_patch_lines": 139,
+      "claude_runtime_ms": 344682,
+      "claude_total_tokens": 1801235,
+      "codex_input_tokens": 3255751,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 15768,
+      "codex_patch_deletions": 21,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 105,
+      "codex_patch_lines": 126,
+      "codex_runtime_ms": 473957,
+      "codex_total_tokens": 3271519,
+      "cutoff": "2026-08-16T05:31:40.386440Z",
+      "patch_lines_delta_claude_minus_codex": 13,
+      "preregistered_pair_reason": "declared_benchmark_at_least_five_percent",
+      "preregistered_pair_winner": "claude",
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -129275,
+      "task_id": "T-VAL-018",
+      "task_revision_id": "TR-0d948d6af210b4d220123854ff805fab8792eab58d52568c742721f09d3819b4"
+    },
+    {
+      "benchmark_results": [],
+      "category": "persistence",
+      "claude_input_tokens": 528958,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 2994,
+      "claude_patch_deletions": 0,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 8,
+      "claude_patch_lines": 8,
+      "claude_runtime_ms": 159155,
+      "claude_total_tokens": 531952,
+      "codex_input_tokens": 776704,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 5201,
+      "codex_patch_deletions": 0,
+      "codex_patch_files": 1,
+      "codex_patch_insertions": 4,
+      "codex_patch_lines": 4,
+      "codex_runtime_ms": 186730,
+      "codex_total_tokens": 781905,
+      "cutoff": "2026-08-16T05:48:12.334225Z",
+      "patch_lines_delta_claude_minus_codex": 4,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -27575,
+      "task_id": "T-VAL-019",
+      "task_revision_id": "TR-a0cf2a80ad09ebb7125e55959189ba03825b554d9976ab9aa8350119427f919a"
+    },
+    {
+      "benchmark_results": [],
+      "category": "persistence",
+      "claude_input_tokens": 4037318,
+      "claude_integrity": "clean",
+      "claude_integrity_paths": [],
+      "claude_outcome": "PASS",
+      "claude_output_tokens": 44933,
+      "claude_patch_deletions": 0,
+      "claude_patch_files": 1,
+      "claude_patch_insertions": 138,
+      "claude_patch_lines": 138,
+      "claude_runtime_ms": 593330,
+      "claude_total_tokens": 4082251,
+      "codex_input_tokens": 2982306,
+      "codex_integrity": "clean",
+      "codex_integrity_paths": [],
+      "codex_outcome": "PASS",
+      "codex_output_tokens": 19360,
+      "codex_patch_deletions": 0,
+      "codex_patch_files": 4,
+      "codex_patch_insertions": 130,
+      "codex_patch_lines": 130,
+      "codex_runtime_ms": 529559,
+      "codex_total_tokens": 3001666,
+      "cutoff": "2026-08-16T05:55:33.014323Z",
+      "patch_lines_delta_claude_minus_codex": 8,
+      "preregistered_pair_reason": "tie_equivalent",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 63771,
+      "task_id": "T-VAL-020",
+      "task_revision_id": "TR-6c49832b3e43ae402b6d2877e3514c9a7147a95d615da0975a1091a80fbe7aeb"
+    },
+    {
+      "benchmark_results": [],
+      "category": "feature",
+      "claude_input_tokens": 5316635,
+      "claude_integrity": "modified",
+      "claude_integrity_paths": [
+        "crates/forge-cli/tests/run.rs"
+      ],
+      "claude_outcome": "INCONCLUSIVE",
+      "claude_output_tokens": 28891,
+      "claude_patch_deletions": 22,
+      "claude_patch_files": 4,
+      "claude_patch_insertions": 152,
+      "claude_patch_lines": 174,
+      "claude_runtime_ms": 436393,
+      "claude_total_tokens": 5345526,
+      "codex_input_tokens": 2282772,
+      "codex_integrity": "modified",
+      "codex_integrity_paths": [
+        "crates/forge-cli/tests/run.rs"
+      ],
+      "codex_outcome": "INCONCLUSIVE",
+      "codex_output_tokens": 11135,
+      "codex_patch_deletions": 1,
+      "codex_patch_files": 4,
+      "codex_patch_insertions": 252,
+      "codex_patch_lines": 253,
+      "codex_runtime_ms": 397315,
+      "codex_total_tokens": 2293907,
+      "cutoff": "2026-08-16T06:15:41.484067Z",
+      "patch_lines_delta_claude_minus_codex": -79,
+      "preregistered_pair_reason": "tie_both_non_pass",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "codex",
+      "runtime_delta_ms_claude_minus_codex": 39078,
+      "task_id": "T-VAL-021",
+      "task_revision_id": "TR-382ec33dc85ba19c7d0ff623e9bf814e4a6971bb97095e31fbbcb376cbd51bf7"
+    },
+    {
+      "benchmark_results": [],
+      "category": "feature",
+      "claude_input_tokens": 15625371,
+      "claude_integrity": "modified",
+      "claude_integrity_paths": [
+        "crates/forge-cli/tests/run.rs"
+      ],
+      "claude_outcome": "INCONCLUSIVE",
+      "claude_output_tokens": 59699,
+      "claude_patch_deletions": 63,
+      "claude_patch_files": 6,
+      "claude_patch_insertions": 472,
+      "claude_patch_lines": 535,
+      "claude_runtime_ms": 849804,
+      "claude_total_tokens": 15685070,
+      "codex_input_tokens": 8975753,
+      "codex_integrity": "modified",
+      "codex_integrity_paths": [
+        "crates/forge-cli/tests/run.rs"
+      ],
+      "codex_outcome": "INCONCLUSIVE",
+      "codex_output_tokens": 29855,
+      "codex_patch_deletions": 55,
+      "codex_patch_files": 11,
+      "codex_patch_insertions": 633,
+      "codex_patch_lines": 688,
+      "codex_runtime_ms": 961153,
+      "codex_total_tokens": 9005608,
+      "cutoff": "2026-08-16T06:31:05.493970Z",
+      "patch_lines_delta_claude_minus_codex": -153,
+      "preregistered_pair_reason": "tie_both_non_pass",
+      "preregistered_pair_winner": null,
+      "raw_runtime_winner": "claude",
+      "runtime_delta_ms_claude_minus_codex": -111349,
+      "task_id": "T-VAL-022",
+      "task_revision_id": "TR-1809d53a806a43abf2d0d4e6230bba6ba57b13897bfd6bc55770054e509fc600"
+    }
+  ],
+  "patch_size": {
+    "interpretation": "descriptive only; smaller is not automatically better",
+    "paired_lines_delta_claude_minus_codex": {
+      "max": 57,
+      "mean": -73.55,
+      "median": -24.5,
+      "min": -433,
+      "n": 20,
+      "q1": -144.75,
+      "q3": 9.25
+    }
+  },
+  "routing": {
+    "baselines": {
+      "always_claude": {
+        "accuracy": 0.5,
+        "classification_counts": {
+          "correct": 5,
+          "incorrect": 5,
+          "no-decision": 0,
+          "not-comparable": 0,
+          "tie-not-scored": 10
+        },
+        "comparable_predictions": 10,
+        "decision_coverage": 1.0,
+        "decisions": 20,
+        "name": "always_claude",
+        "regret": 1,
+        "regret_rate": 0.1,
+        "selected_agent_pass_rate": 0.85,
+        "selected_agent_passes": 17,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "claude",
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      },
+      "always_codex": {
+        "accuracy": 0.5,
+        "classification_counts": {
+          "correct": 5,
+          "incorrect": 5,
+          "no-decision": 0,
+          "not-comparable": 0,
+          "tie-not-scored": 10
+        },
+        "comparable_predictions": 10,
+        "decision_coverage": 1.0,
+        "decisions": 20,
+        "name": "always_codex",
+        "regret": 1,
+        "regret_rate": 0.1,
+        "selected_agent_pass_rate": 0.85,
+        "selected_agent_passes": 17,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "selected_agent": "codex",
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      },
+      "best_global_historical": {
+        "accuracy": 0.5,
+        "classification_counts": {
+          "correct": 1,
+          "incorrect": 1,
+          "no-decision": 16,
+          "not-comparable": 0,
+          "tie-not-scored": 2
+        },
+        "comparable_predictions": 2,
+        "decision_coverage": 0.2,
+        "decisions": 4,
+        "name": "best_global_historical",
+        "regret": 1,
+        "regret_rate": 0.5,
+        "selected_agent_pass_rate": 0.75,
+        "selected_agent_passes": 3,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 6,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 8,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 10,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.8
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 12,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.8333333333333334
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "historical_attempts": 14,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.8571428571428571
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "historical_attempts": 16,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.875
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 18,
+            "historical_pass_rates": {
+              "claude": 0.8888888888888888,
+              "codex": 0.8888888888888888
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 20,
+            "historical_pass_rates": {
+              "claude": 0.9,
+              "codex": 0.9
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 22,
+            "historical_pass_rates": {
+              "claude": 0.9090909090909091,
+              "codex": 0.9090909090909091
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 24,
+            "historical_pass_rates": {
+              "claude": 0.9166666666666666,
+              "codex": 0.9166666666666666
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 26,
+            "historical_pass_rates": {
+              "claude": 0.9230769230769231,
+              "codex": 0.9230769230769231
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 28,
+            "historical_pass_rates": {
+              "claude": 0.9285714285714286,
+              "codex": 0.9285714285714286
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 30,
+            "historical_pass_rates": {
+              "claude": 0.9333333333333333,
+              "codex": 0.9333333333333333
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 32,
+            "historical_pass_rates": {
+              "claude": 0.9375,
+              "codex": 0.9375
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 34,
+            "historical_pass_rates": {
+              "claude": 0.9411764705882353,
+              "codex": 0.9411764705882353
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 36,
+            "historical_pass_rates": {
+              "claude": 0.9444444444444444,
+              "codex": 0.9444444444444444
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 38,
+            "historical_pass_rates": {
+              "claude": 0.8947368421052632,
+              "codex": 0.8947368421052632
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      },
+      "category_aware_historical": {
+        "accuracy": null,
+        "classification_counts": {
+          "correct": 0,
+          "incorrect": 0,
+          "no-decision": 16,
+          "not-comparable": 0,
+          "tie-not-scored": 4
+        },
+        "comparable_predictions": 0,
+        "decision_coverage": 0.2,
+        "decisions": 4,
+        "name": "category_aware_historical",
+        "regret": 0,
+        "regret_rate": null,
+        "selected_agent_pass_rate": 0.5,
+        "selected_agent_passes": 2,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 6,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.0
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 6,
+            "historical_pass_rates": {
+              "claude": 0.6666666666666666,
+              "codex": 1.0
+            },
+            "selected_agent": "codex",
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 0,
+            "historical_pass_rates": {
+              "claude": null,
+              "codex": null
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "historical_attempts": 2,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 1.0
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 4,
+            "historical_pass_rates": {
+              "claude": 1.0,
+              "codex": 0.5
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "historical_attempts": 6,
+            "historical_pass_rates": {
+              "claude": 0.6666666666666666,
+              "codex": 0.3333333333333333
+            },
+            "selected_agent": "claude",
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      },
+      "forge_router": {
+        "accuracy": null,
+        "classification_counts": {
+          "correct": 0,
+          "incorrect": 0,
+          "no-decision": 20,
+          "not-comparable": 0,
+          "tie-not-scored": 0
+        },
+        "comparable_predictions": 0,
+        "decision_coverage": 0.0,
+        "decisions": 0,
+        "name": "forge_router",
+        "regret": 0,
+        "regret_rate": null,
+        "selected_agent_pass_rate": null,
+        "selected_agent_passes": 0,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-12T22:36:48.881550Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 0,
+              "evidence_ready": false,
+              "historical_records": 0,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 0,
+                "codex": 0
+              },
+              "resolved_records": 0,
+              "score_margin": 0.0,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 0,
+                  "routing_score": 0.5,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 0
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 0,
+                  "routing_score": 0.5,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 0
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-001"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-12T23:08:36.698111Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 2,
+              "evidence_ready": false,
+              "historical_records": 2,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 1,
+                "codex": 1
+              },
+              "resolved_records": 2,
+              "score_margin": 0.0,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 1,
+                  "routing_score": 0.6120906801007557,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 0.577922077922078
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 1,
+                  "routing_score": 0.6120906801007557,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 0.577922077922078
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-002"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-12T23:29:47.122546Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 4,
+              "evidence_ready": false,
+              "historical_records": 4,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 2,
+                "codex": 2
+              },
+              "resolved_records": 4,
+              "score_margin": 0.0,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 2,
+                  "routing_score": 0.6981822546202255,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 1.3132578031212485
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 2,
+                  "routing_score": 0.6981822546202255,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 1.3132578031212485
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-003"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-12T23:47:57.653433Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 6,
+              "evidence_ready": false,
+              "historical_records": 6,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 3,
+                "codex": 3
+              },
+              "resolved_records": 6,
+              "score_margin": 0.0,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 3,
+                  "routing_score": 0.7504567148274108,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.0073208113309073
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 3,
+                  "routing_score": 0.7504567148274108,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.0073208113309073
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-004"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-13T00:03:26.938643Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 8,
+              "evidence_ready": false,
+              "historical_records": 8,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 4,
+                "codex": 4
+              },
+              "resolved_records": 8,
+              "score_margin": 0.0,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 4,
+                  "routing_score": 0.758643135051563,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.1432424149760063
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 4,
+                  "routing_score": 0.758643135051563,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.1432424149760063
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-006"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-15T23:42:22.958892Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 9,
+              "evidence_ready": false,
+              "historical_records": 10,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 5,
+                "codex": 4
+              },
+              "resolved_records": 9,
+              "score_margin": 0.03853625341467137,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 5,
+                  "routing_score": 0.7972910046872669,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.933180189942886
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 4,
+                  "routing_score": 0.7587547512725955,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.1451593566095526
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-008"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T00:00:40.790166Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 11,
+              "evidence_ready": true,
+              "historical_records": 12,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 6,
+                "codex": 5
+              },
+              "resolved_records": 11,
+              "score_margin": 0.020444930248094018,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 6,
+                  "routing_score": 0.81005473057472,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.264674413981004
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 5,
+                  "routing_score": 0.789609800326626,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 2.7530731067914616
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-009"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T00:18:51.424945Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 13,
+              "evidence_ready": true,
+              "historical_records": 14,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 7,
+                "codex": 6
+              },
+              "resolved_records": 13,
+              "score_margin": 0.021633344934155807,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 7,
+                  "routing_score": 0.8320699309289493,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.9548596956564275
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 6,
+                  "routing_score": 0.8104365859947935,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.2752795429846717
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-010"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T00:37:29.909606Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 15,
+              "evidence_ready": true,
+              "historical_records": 16,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 8,
+                "codex": 7
+              },
+              "resolved_records": 15,
+              "score_margin": 0.012721929272329846,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 8,
+                  "routing_score": 0.8292184024231339,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.8554318157722807
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 7,
+                  "routing_score": 0.8164964731508041,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.44948654214044
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-012"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T01:00:50.075956Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 16,
+              "evidence_ready": true,
+              "historical_records": 18,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 8,
+                "codex": 8
+              },
+              "resolved_records": 16,
+              "score_margin": 0.005210683116244841,
+              "scores": [
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 8,
+                  "routing_score": 0.8281148189898395,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.817837198780319
+                },
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 8,
+                  "routing_score": 0.8229041358735947,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 3.646659253918163
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-023"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T01:13:41.879310Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 18,
+              "evidence_ready": true,
+              "historical_records": 20,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 9,
+                "codex": 9
+              },
+              "resolved_records": 18,
+              "score_margin": 0.003672486478865533,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 9,
+                  "routing_score": 0.8540689489436787,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 4.852551206624661
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 9,
+                  "routing_score": 0.8503964624648132,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 4.6843339166682405
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-013"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T01:30:43.909799Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 20,
+              "evidence_ready": true,
+              "historical_records": 22,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 10,
+                "codex": 10
+              },
+              "resolved_records": 20,
+              "score_margin": 0.0013511802012357021,
+              "scores": [
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 10,
+                  "routing_score": 0.8577274675701286,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 5.028763619519584
+                },
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 10,
+                  "routing_score": 0.8563762873688929,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 4.962638562118696
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-014"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T04:45:59.702314Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 22,
+              "evidence_ready": true,
+              "historical_records": 24,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 11,
+                "codex": 11
+              },
+              "resolved_records": 22,
+              "score_margin": 0.0020718042170214668,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 11,
+                  "routing_score": 0.8686400349202285,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 5.612669502406806
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 11,
+                  "routing_score": 0.866568230703207,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 5.494467061856118
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-015"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T05:01:43.725749Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 24,
+              "evidence_ready": true,
+              "historical_records": 26,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 12,
+                "codex": 12
+              },
+              "resolved_records": 24,
+              "score_margin": 0.002030515064763261,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 12,
+                  "routing_score": 0.8849829897799926,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 6.694366147121842
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 12,
+                  "routing_score": 0.8829524747152293,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 6.54353817021804
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-016"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T05:19:48.658372Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 26,
+              "evidence_ready": true,
+              "historical_records": 28,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 13,
+                "codex": 13
+              },
+              "resolved_records": 26,
+              "score_margin": 0.0014799425681639722,
+              "scores": [
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 13,
+                  "routing_score": 0.8780406371173607,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 6.199452476332584
+                },
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 13,
+                  "routing_score": 0.8765606945491967,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 6.101147331864649
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-017"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T05:31:40.386440Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 28,
+              "evidence_ready": true,
+              "historical_records": 30,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 14,
+                "codex": 14
+              },
+              "resolved_records": 28,
+              "score_margin": 0.0017443227055136123,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 14,
+                  "routing_score": 0.9037365487542315,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.388158611173393
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 14,
+                  "routing_score": 0.9019922260487179,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.203272247537031
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-018"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T05:48:12.334225Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 30,
+              "evidence_ready": true,
+              "historical_records": 32,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 15,
+                "codex": 15
+              },
+              "resolved_records": 30,
+              "score_margin": 0.001347812647851221,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 15,
+                  "routing_score": 0.9065457162884851,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.700419074281404
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 15,
+                  "routing_score": 0.9051979036406339,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.548289947189591
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-019"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T05:55:33.014323Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 32,
+              "evidence_ready": true,
+              "historical_records": 34,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 16,
+                "codex": 16
+              },
+              "resolved_records": 32,
+              "score_margin": 0.00030329410702178983,
+              "scores": [
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 16,
+                  "routing_score": 0.9047170732060037,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.495059646541097
+                },
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 16,
+                  "routing_score": 0.9044137790989819,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.461758928993806
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-020"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T06:15:41.484067Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 34,
+              "evidence_ready": true,
+              "historical_records": 36,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 17,
+                "codex": 17
+              },
+              "resolved_records": 34,
+              "score_margin": 0.004162910063298164,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 17,
+                  "routing_score": 0.9043443713697744,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.454167876160048
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 17,
+                  "routing_score": 0.9001814613064762,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.018179118713952
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-021"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "no-decision",
+            "router": {
+              "cutoff": "2026-08-16T06:31:05.493970Z",
+              "decision_kind": "compete_recommended",
+              "eligible_records": 34,
+              "evidence_ready": true,
+              "historical_records": 38,
+              "minimum_score_margin": 0.05,
+              "per_agent_resolved": {
+                "claude": 17,
+                "codex": 17
+              },
+              "resolved_records": 34,
+              "score_margin": 0.003601870110904737,
+              "scores": [
+                {
+                  "agent": "claude",
+                  "negative_count": 0,
+                  "positive_count": 17,
+                  "routing_score": 0.9083412303958089,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.910030805762373
+                },
+                {
+                  "agent": "codex",
+                  "negative_count": 0,
+                  "positive_count": 17,
+                  "routing_score": 0.9047393602849042,
+                  "unresolved_count": 0,
+                  "weighted_similarity_evidence": 8.497515059638342
+                }
+              ],
+              "selected_agent": null,
+              "task_id": "T-VAL-022"
+            },
+            "selected_agent": null,
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      },
+      "seeded_random": {
+        "accuracy": 0.3,
+        "classification_counts": {
+          "correct": 3,
+          "incorrect": 7,
+          "no-decision": 0,
+          "not-comparable": 0,
+          "tie-not-scored": 10
+        },
+        "comparable_predictions": 10,
+        "decision_coverage": 1.0,
+        "decisions": 20,
+        "name": "seeded_random",
+        "regret": 1,
+        "regret_rate": 0.1,
+        "selected_agent_pass_rate": 0.85,
+        "selected_agent_passes": 17,
+        "task_results": [
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "6a0318233dd2adcfd602da1860b87e5f613fb07c0532be18d7508b4699bd77a0",
+            "task_id": "T-VAL-001"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "e84be182c7379f7abb97a07f8e9da9374db6c06aec1088f31fc8e94ab5007f30",
+            "task_id": "T-VAL-002"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "e06ce9c5ae9edeaae1fb80094278f562bf7de14387229af37c18b3bce392d3ab",
+            "task_id": "T-VAL-003"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "f439940526b19f779cf75d1c0652d59be4928c6ea2c286290edefd7dcd3f0609",
+            "task_id": "T-VAL-004"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "da3d81d1bde9ebb2634dd0f5d4b460b66b33d19c8f25bf9449984a53f8fc0731",
+            "task_id": "T-VAL-006"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "89ca4588c751e6fdc17f1c8f53f24801a7796ee9f4cb4b74a274036ab9a8ae01",
+            "task_id": "T-VAL-008"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "8353ba449a23181d79ce384f73a4a150e1828c59bb1b4635866b030a79cb309f",
+            "task_id": "T-VAL-009"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "e22a8406943cb7b2793d1dc77d2c9ae4ec5caf98b2155eb5d870c0f759b48921",
+            "task_id": "T-VAL-010"
+          },
+          {
+            "actual_pair_reason": "pass_beats_non_pass",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "c9632738f745a5b4e43172c1731e7cbdd0cc6c53c78102b1aa3f49f0c5801d13",
+            "task_id": "T-VAL-012"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "2c8202a823b47961093ce2e540a8a7606f6d79ff781cc3774658376f5bb8d296",
+            "task_id": "T-VAL-023"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "86a73be0cafe2f4a7c601f0be47945b4134890ba20ddc76b0a819c7a367c9694",
+            "task_id": "T-VAL-013"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "codex",
+            "classification": "correct",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "cd50779545c74688662780bd539f44faa9f16a6139f61dc47c9d973366ada563",
+            "task_id": "T-VAL-014"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "df5a32d9247b938ef9eacf80d3c1d1001baf769b8a9056f8d4f4d1915c62159e",
+            "task_id": "T-VAL-015"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "codex",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "eac78932befbc1763eb35f4e56bf3e97254261a0175270e89e2067353d4d76b4",
+            "task_id": "T-VAL-016"
+          },
+          {
+            "actual_pair_reason": "runtime_at_least_twenty_percent",
+            "actual_pair_winner": "claude",
+            "classification": "correct",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "fbc5b54c7e324249d4ec93036ec2bbc24c28304978b4b2f9dd6bfb91bf7fc8b2",
+            "task_id": "T-VAL-017"
+          },
+          {
+            "actual_pair_reason": "declared_benchmark_at_least_five_percent",
+            "actual_pair_winner": "claude",
+            "classification": "incorrect",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "5da251b11352597f531a4892cceb77587dffece92d47dd1f3cbb70bc502d2245",
+            "task_id": "T-VAL-018"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "9bc7f0525fd53c6fd4e774f02fb19511cb2cf964cb47a264cc446247e593d852",
+            "task_id": "T-VAL-019"
+          },
+          {
+            "actual_pair_reason": "tie_equivalent",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "09fd3ed23ed611de21ac4402132c45a16ef357ebdf46a5515d1047af6b6e679d",
+            "task_id": "T-VAL-020"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "codex",
+            "sha256": "a8ba0748858173eb28d8ca33f8bd2257697c655a1ef210655c85d397af07d11f",
+            "task_id": "T-VAL-021"
+          },
+          {
+            "actual_pair_reason": "tie_both_non_pass",
+            "actual_pair_winner": null,
+            "classification": "tie-not-scored",
+            "mapping": "digest integer modulo lexicographic candidates",
+            "selected_agent": "claude",
+            "sha256": "543d65bcb89d86fcfaad876b0edbc565f9d034e5076fa5324ad758ccee522a3c",
+            "task_id": "T-VAL-022"
+          }
+        ],
+        "tasks": 20
+      }
+    },
+    "evidence_ready_tasks": 14,
+    "first_evidence_ready_task": "T-VAL-009",
+    "minimum_resolved_evidence_per_agent": 3,
+    "minimum_score_margin": 0.05,
+    "minimum_total_resolved_evidence": 10,
+    "router_version": "historical-baseline-v1",
+    "seed": "forge-v1-2026-08",
+    "seeded_random_mapping_note": "The plan froze SHA256(seed || task_revision_id) but did not spell out bit-to-agent mapping; this analysis uses the digest as a big-endian integer modulo lexicographically sorted candidates.",
+    "tasks_before_evidence_ready": 6,
+    "temporal_cutoff_rule": "COALESCE(finished_at, created_at) <= earliest pair created_at"
+  },
+  "runtime": {
+    "delta_sign_convention": "Claude - Codex; positive means Codex faster",
+    "paired_delta_ms": {
+      "max": 390889,
+      "mean": 24361.45,
+      "median": 23351.0,
+      "min": -203873,
+      "n": 20,
+      "q1": -110037.25,
+      "q3": 66688.5
+    },
+    "raw_wins": {
+      "claude": 9,
+      "codex": 11,
+      "tie": 0
+    }
+  },
+  "statistical_limitations": [
+    "one repository",
+    "Rust-heavy codebase",
+    "20 maintainer-selected non-random tasks",
+    "one attempt per task and agent",
+    "specific Claude Code and Codex CLI harness versions",
+    "specific 2026 campaign period",
+    "frozen Forge v1.0.1 baseline",
+    "provider token-accounting semantics may differ"
+  ]
+}
