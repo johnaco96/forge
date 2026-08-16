@@ -239,6 +239,9 @@ engineering policies, evidence-backed proposals, canaries, and rollback.
 See [`docs/validation.md`](docs/validation.md) for the empirical validation
 program: the 20-task corpus, the pre-registered analysis rules, and what has
 actually been measured rather than built.
+See [`docs/codex-accounting.md`](docs/codex-accounting.md) for provider token
+evidence, versioned Codex credit derivation, missingness, and the offline
+campaign-enrichment boundary.
 
 ---
 
