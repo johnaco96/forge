@@ -170,6 +170,12 @@ impl EvaluationEngine {
                     check
                 }
                 Err(error) => {
+                    let infrastructure_failure = match &error {
+                        crate::EvalError::Exec(forge_executor::ExecError::Infrastructure(
+                            failure,
+                        )) => Some(failure.clone()),
+                        _ => None,
+                    };
                     let error = error.to_string();
                     tracing::warn!(check = evaluator.id(), %error, "evaluator could not run");
                     ctx.events.emit(EventPayload::EvaluatorFailed {
@@ -187,6 +193,9 @@ impl EvaluationEngine {
                     );
                     check.command = evaluator.command().map(str::to_string);
                     check.duration_ms = timer.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+                    if let Some(failure) = infrastructure_failure {
+                        check.infrastructure_failures.push(failure);
+                    }
                     check
                 }
             };

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use chrono::{DateTime, Utc};
 use forge_core::ids::{AgentId, ExperimentId, RunId};
 use forge_core::routing::{
     AgentEvidenceCount, EvidenceExclusionCount, EvidenceExclusionReason, ExcludedRoutingEvidence,
@@ -9,9 +10,10 @@ use forge_core::routing::{
     RoutingFeatures, RoutingReadiness, RoutingReadinessReason, RoutingRequest, RoutingTarget,
     UnresolvedRoutingTarget,
 };
-use forge_core::run::{AgentExecutionStatus, ExecutionProvenance, RunOutcome, RunStatus};
-use forge_core::task::TaskRevision;
+use forge_core::run::{AgentExecutionStatus, AgentRun, ExecutionProvenance, RunOutcome, RunStatus};
+use forge_core::task::{EngineeringTask, TaskRevision};
 use sqlx::{QueryBuilder, Row, Sqlite};
+use tokio::sync::Barrier;
 
 use crate::experience::{TaskExperience, similarity};
 use crate::{Store, StoreError, StoreResult};
@@ -19,8 +21,31 @@ use crate::{Store, StoreError, StoreResult};
 impl Store {
     /// Retrieves compact, policy-filtered observations for the exact immutable
     /// request. SQL and ledger decoding remain entirely inside `forge-store`.
+    ///
+    /// All mutable ledger inputs are read by one SQLite statement. SQLite
+    /// therefore supplies one snapshot even while other connections complete
+    /// runs or evaluations; routing never stitches together profiles, run
+    /// records, and evaluator summaries observed at different instants.
     pub async fn routing_evidence(&self, request: &RoutingRequest) -> StoreResult<RoutingEvidence> {
-        let profiles = self.task_revision_profiles().await?;
+        self.routing_evidence_in_snapshot(request, None).await
+    }
+
+    async fn routing_evidence_in_snapshot(
+        &self,
+        request: &RoutingRequest,
+        test_barriers: Option<(std::sync::Arc<Barrier>, std::sync::Arc<Barrier>)>,
+    ) -> StoreResult<RoutingEvidence> {
+        let mut transaction = self.pool().begin().await?;
+        // Establish the SQLite read snapshot before any routing inputs are
+        // collected. The count is deliberately unused; all domain input still
+        // comes from the single joined statement below.
+        let _: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM runs")
+            .fetch_one(&mut *transaction)
+            .await?;
+        if let Some((ready, resume)) = test_barriers {
+            ready.wait().await;
+            resume.wait().await;
+        }
         let target = TaskExperience {
             revision_id: request.task_revision().revision_id().clone(),
             task_id: request.task_revision().task().task_id.clone(),
@@ -38,18 +63,24 @@ impl Store {
             .map(AgentId::as_str)
             .collect::<Vec<_>>();
         let mut query = QueryBuilder::<Sqlite>::new(
-            "SELECT run_id, task_revision_id, agent_id, config_fingerprint, experiment_id, \
-                    execution_provenance, created_at \
-             FROM runs WHERE created_at <= ",
+            "SELECT r.run_id, r.task_revision_id, r.agent_id, r.config_fingerprint, \
+                    r.experiment_id, r.execution_provenance, r.created_at, r.finished_at, \
+                    r.record_json, tr.definition_json, e.summary_json, \
+                    e.finished_at AS evaluation_finished_at \
+             FROM runs r \
+             JOIN task_revisions tr ON tr.revision_id = r.task_revision_id \
+             LEFT JOIN evaluations e ON e.run_id = r.run_id \
+             WHERE r.created_at <= ",
         );
         query.push_bind(request.historical_cutoff().to_rfc3339());
-        query.push(" AND agent_id IN (");
+        query.push(" AND r.agent_id IN (");
         let mut separated = query.separated(", ");
         for agent_id in &candidate_ids {
             separated.push_bind(agent_id);
         }
-        separated.push_unseparated(") ORDER BY created_at, run_id");
-        let rows = query.build().fetch_all(self.pool()).await?;
+        separated.push_unseparated(") ORDER BY r.created_at, r.run_id");
+        let rows = query.build().fetch_all(&mut *transaction).await?;
+        transaction.commit().await?;
         let historical_runs_found = rows.len() as u64;
 
         let mut eligible = Vec::new();
@@ -61,19 +92,33 @@ impl Store {
                 row.try_get::<String, _>("task_revision_id")?,
             )
             .map_err(|error| StoreError::Corrupt(error.to_string()))?;
-            let profile = profiles.get(&revision_id).ok_or_else(|| {
-                StoreError::Corrupt(format!(
-                    "run `{run_id}` references missing task revision `{revision_id}`"
-                ))
-            })?;
-            let (similarity_score, similarity_reasons) = similarity(&target, profile);
+            let definition: EngineeringTask =
+                serde_json::from_str(&row.try_get::<String, _>("definition_json")?)?;
+            let historical_revision = TaskRevision::from_stored(revision_id.clone(), definition)
+                .map_err(|error| StoreError::Corrupt(error.to_string()))?;
+            let profile = TaskExperience {
+                revision_id: revision_id.clone(),
+                task_id: historical_revision.task().task_id.clone(),
+                repository: historical_revision.task().repository.clone(),
+                objective: historical_revision.task().objective.clone(),
+                definition: historical_revision.task().clone(),
+                classification: historical_revision.task().effective_classification(),
+                components: historical_revision.task().components.clone(),
+                tags: historical_revision.task().tags.clone(),
+            };
+            let (similarity_score, similarity_reasons) = similarity(&target, &profile);
             if similarity_score >= request.evidence_policy().minimum_similarity_score {
                 comparable_revisions.insert(revision_id.clone());
             }
 
-            let run = self.load_run(&run_id).await?.ok_or_else(|| {
-                StoreError::Corrupt(format!("routing query could not reload run `{run_id}`"))
-            })?;
+            let run: AgentRun = serde_json::from_str(&row.try_get::<String, _>("record_json")?)?;
+            if run.run_id != run_id
+                || run.created_at.to_rfc3339() != row.try_get::<String, _>("created_at")?
+            {
+                return Err(StoreError::Corrupt(format!(
+                    "run `{run_id}` differs between indexed and complete records"
+                )));
+            }
             let stored_provenance: ExecutionProvenance =
                 parse_enum(&row.try_get::<String, _>("execution_provenance")?)?;
             if run.execution_provenance != stored_provenance {
@@ -81,10 +126,18 @@ impl Store {
                     "run `{run_id}` provenance differs between indexed and complete records"
                 )));
             }
-            let evaluation = self.load_evaluation(&run_id).await?;
+            let evaluation = row
+                .try_get::<Option<String>, _>("summary_json")?
+                .map(|raw| serde_json::from_str::<forge_core::EvaluationSummary>(&raw))
+                .transpose()?;
+            let evaluation_finished_at = row
+                .try_get::<Option<String>, _>("evaluation_finished_at")?
+                .map(|raw| parse_time(&raw))
+                .transpose()?;
             let exclusion = exclusion_reason(
                 &run,
-                evaluation.as_ref().map(|value| value.summary()),
+                evaluation.as_ref(),
+                evaluation_finished_at,
                 similarity_score,
                 request,
             );
@@ -111,9 +164,6 @@ impl Store {
                     run.run_id
                 ))
             })?;
-            let historical_revision =
-                TaskRevision::from_stored(revision_id.clone(), profile.definition.clone())
-                    .map_err(|error| StoreError::Corrupt(error.to_string()))?;
             let experiment_id = row
                 .try_get::<Option<String>, _>("experiment_id")?
                 .map(parse_experiment_id)
@@ -139,7 +189,7 @@ impl Store {
                 outcome,
                 target,
                 integrity: run.integrity.as_ref().map(|value| value.status),
-                evaluator_summary: evaluation.as_ref().map(|value| value.summary()),
+                evaluator_summary: evaluation,
                 agent_runtime_ms: Some(execution.duration_ms),
                 provider_reported_usage: execution.usage.clone(),
                 known_cost_usd: execution.usage.cost_usd,
@@ -177,7 +227,8 @@ impl Store {
 
 fn exclusion_reason(
     run: &forge_core::AgentRun,
-    evaluation: Option<forge_core::EvaluationSummary>,
+    evaluation: Option<&forge_core::EvaluationSummary>,
+    evaluation_finished_at: Option<DateTime<Utc>>,
     similarity_score: f64,
     request: &RoutingRequest,
 ) -> Option<EvidenceExclusionReason> {
@@ -206,6 +257,15 @@ fn exclusion_reason(
             provenance => EvidenceExclusionReason::ProvenanceNotAllowed { provenance },
         });
     }
+    match run.finished_at {
+        Some(completed_at) if completed_at > request.historical_cutoff() => {
+            return Some(EvidenceExclusionReason::OutcomeAvailableAfterCutoff { completed_at });
+        }
+        None if run.status == RunStatus::Completed => {
+            return Some(EvidenceExclusionReason::MissingCompletionTimestamp);
+        }
+        _ => {}
+    }
     if matches!(run.status, RunStatus::Failed | RunStatus::Cancelled)
         || run.outcome == Some(RunOutcome::Errored)
     {
@@ -230,6 +290,11 @@ fn exclusion_reason(
     };
     if outcome == RunOutcome::Errored {
         return Some(EvidenceExclusionReason::InfrastructureFailure);
+    }
+    if let Some(completed_at) = evaluation_finished_at
+        && completed_at > request.historical_cutoff()
+    {
+        return Some(EvidenceExclusionReason::EvaluationAvailableAfterCutoff { completed_at });
     }
     let integrity = run.integrity.as_ref().map(|value| value.status);
     if integrity.is_none() && policy.require_acceptable_integrity {
@@ -383,9 +448,16 @@ fn parse_enum<T: serde::de::DeserializeOwned>(raw: &str) -> StoreResult<T> {
     ))?)
 }
 
+fn parse_time(raw: &str) -> StoreResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(raw)
+        .map(|value| value.with_timezone(&Utc))
+        .map_err(|error| StoreError::Corrupt(format!("invalid timestamp `{raw}`: {error}")))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use chrono::{DateTime, TimeDelta, Utc};
     use forge_core::agent::AgentConfig;
@@ -512,6 +584,7 @@ mod tests {
             },
             self_report: None,
             harness_metadata: BTreeMap::new(),
+            infrastructure_failures: Vec::new(),
         });
         run.patch = Some(PatchSummary {
             base_commit: "base-commit".into(),
@@ -585,12 +658,106 @@ mod tests {
                     metrics: Vec::new(),
                     warnings: Vec::new(),
                     execution_error: None,
+                    infrastructure_failures: Vec::new(),
                 }
             };
             let evaluation =
                 Evaluation::from_checks(run.run_id.clone(), vec![check], started, finished);
             store.record_evaluation(&evaluation).await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn completed_run_committed_after_snapshot_start_cannot_leak_into_decision() {
+        let fixture = tempfile::tempdir().unwrap();
+        let store = Store::open(fixture.path().join("routing.db"))
+            .await
+            .unwrap();
+        let task = task(
+            "debugging",
+            "concurrency",
+            "Repair concurrent queue wakeup ordering",
+        );
+        let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+
+        let route_request = request(
+            TaskRevision::snapshot(task.clone()).unwrap(),
+            start + TimeDelta::days(1),
+            MinimumRoutingEvidence {
+                total: 1,
+                per_agent: 0,
+            },
+        );
+        let ready = Arc::new(Barrier::new(2));
+        let resume = Arc::new(Barrier::new(2));
+        let reader = store.clone();
+        let reader_ready = ready.clone();
+        let reader_resume = resume.clone();
+        let read = tokio::spawn(async move {
+            reader
+                .routing_evidence_in_snapshot(&route_request, Some((reader_ready, reader_resume)))
+                .await
+                .unwrap()
+        });
+        ready.wait().await;
+
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 2,
+                agent: "beta",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start + TimeDelta::seconds(1),
+        )
+        .await;
+        resume.wait().await;
+
+        let evidence = read.await.unwrap();
+        assert_eq!(
+            evidence
+                .eligible
+                .iter()
+                .map(|record| record.run_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["R-0001"]
+        );
+        let after = store
+            .routing_evidence(&request(
+                TaskRevision::snapshot(task).unwrap(),
+                start + TimeDelta::days(1),
+                MinimumRoutingEvidence {
+                    total: 1,
+                    per_agent: 0,
+                },
+            ))
+            .await
+            .unwrap();
+        assert_eq!(after.eligible.len(), 2);
     }
 
     #[tokio::test]
@@ -1088,5 +1255,146 @@ mod tests {
         let after = store.routing_evidence(&routing).await.unwrap();
         assert_eq!(before, after);
         assert_eq!(after.snapshot.eligible_run_ids, vec![RunId::sequential(1)]);
+    }
+
+    #[tokio::test]
+    async fn run_started_before_cutoff_but_completed_after_is_excluded() {
+        let store = Store::open_in_memory().await.unwrap();
+        let task = task("debugging", "concurrency", "Repair queue ordering");
+        let revision = TaskRevision::snapshot(task.clone()).unwrap();
+        let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+
+        let cutoff = start + TimeDelta::milliseconds(20);
+        let evidence = store
+            .routing_evidence(&request(
+                revision,
+                cutoff,
+                MinimumRoutingEvidence {
+                    total: 1,
+                    per_agent: 1,
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert!(evidence.eligible.is_empty());
+        assert!(matches!(
+            evidence.excluded.as_slice(),
+            [ExcludedRoutingEvidence {
+                reason: EvidenceExclusionReason::OutcomeAvailableAfterCutoff { completed_at },
+                ..
+            }] if *completed_at == start + TimeDelta::milliseconds(35)
+        ));
+    }
+
+    #[tokio::test]
+    async fn outcome_and_evaluation_at_cutoff_are_eligible() {
+        let store = Store::open_in_memory().await.unwrap();
+        let task = task("debugging", "concurrency", "Repair queue ordering");
+        let revision = TaskRevision::snapshot(task.clone()).unwrap();
+        let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+
+        let evidence = store
+            .routing_evidence(&request(
+                revision,
+                start + TimeDelta::milliseconds(35),
+                MinimumRoutingEvidence {
+                    total: 1,
+                    per_agent: 1,
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(evidence.eligible.len(), 1);
+        assert!(evidence.excluded.is_empty());
+    }
+
+    #[tokio::test]
+    async fn evaluation_completed_after_cutoff_is_excluded() {
+        let store = Store::open_in_memory().await.unwrap();
+        let task = task("debugging", "concurrency", "Repair queue ordering");
+        let revision = TaskRevision::snapshot(task.clone()).unwrap();
+        let start = DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        persist(
+            &store,
+            &task,
+            Observation {
+                id: 1,
+                agent: "alpha",
+                provenance: ExecutionProvenance::Live,
+                run_status: RunStatus::Completed,
+                agent_status: AgentExecutionStatus::Completed,
+                outcome: Some(RunOutcome::Passed),
+                integrity: Some(IntegrityStatus::Clean),
+                evaluator_error: false,
+            },
+            start,
+        )
+        .await;
+        let run_id = RunId::sequential(1);
+        let mut evaluation = store.load_evaluation(&run_id).await.unwrap().unwrap();
+        evaluation.finished_at = start + TimeDelta::milliseconds(60);
+        store.record_evaluation(&evaluation).await.unwrap();
+
+        let cutoff = start + TimeDelta::milliseconds(40);
+        let evidence = store
+            .routing_evidence(&request(
+                revision,
+                cutoff,
+                MinimumRoutingEvidence {
+                    total: 1,
+                    per_agent: 1,
+                },
+            ))
+            .await
+            .unwrap();
+
+        assert!(evidence.eligible.is_empty());
+        assert!(matches!(
+            evidence.excluded.as_slice(),
+            [ExcludedRoutingEvidence {
+                reason: EvidenceExclusionReason::EvaluationAvailableAfterCutoff { completed_at },
+                ..
+            }] if *completed_at == start + TimeDelta::milliseconds(60)
+        ));
     }
 }

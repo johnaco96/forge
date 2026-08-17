@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.93.0 --profile minimal --component clippy,rustfmt && rustup default 1.93.0
+      - run: cargo fmt --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test --workspace
+      - run: git diff --check
+      - run: python3 validation/scripts/test-analyze-tier1.py
+      - run: python3 scripts/validate-routing-holdout.py
+      - run: python3 scripts/validate-pilot.py
+      - run: ./scripts/migration-gate.sh
+      - name: Exact Rust router replay is byte-deterministic
+        run: |
+          cargo run -q -p forge-router --bin forge-router-replay -- --input .forge/validation-archive/tier1-master.jsonl --summary > /tmp/replay-a.jsonl
+          cargo run -q -p forge-router --bin forge-router-replay -- --input .forge/validation-archive/tier1-master.jsonl --summary > /tmp/replay-b.jsonl
+          cmp /tmp/replay-a.jsonl /tmp/replay-b.jsonl
+          test "$(sha256sum /tmp/replay-a.jsonl | awk '{print $1}')" = "a1f48136b207e022f8d9dd2e655a9b6ff75ced8221d129a4aa918ca39a0cf5a0"
+      - name: Doctor identifies development containment as not production-ready
+        run: |
+          set +e
+          cargo run -q -p forge-cli --bin forge -- doctor > /tmp/doctor.txt
+          code=$?
+          set -e
+          test "$code" -eq 2
+          grep -q "NOT READY for supervised production" /tmp/doctor.txt
+
+  docker-sandbox:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.93.0 --profile minimal && rustup default 1.93.0
+      - run: docker pull alpine:3.20
+      - name: OCI adversarial fixtures
+        run: cargo test -p forge-executor docker_adversarial -- --ignored --nocapture

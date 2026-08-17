@@ -1,10 +1,12 @@
 pub mod agent;
 pub mod compete;
+pub mod doctor;
 pub mod experience;
 pub mod health;
 pub mod init;
 pub mod policy;
 pub mod run;
+pub mod store;
 pub mod task;
 pub mod team;
 pub mod world;

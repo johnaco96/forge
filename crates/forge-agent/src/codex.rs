@@ -9,9 +9,8 @@
 //!
 //! Forge starts Codex in a dedicated Git worktree and explicitly selects the
 //! CLI's `workspace-write` sandbox by default. This constrains model-generated
-//! commands, but it is not Forge-managed host containment: the Codex CLI still
-//! runs as the invoking user. The configured Codex sandbox and approval modes
-//! are therefore reported separately from Forge's `host containment: none`.
+//! commands but remains separate from Forge-managed OCI containment. Reports
+//! record both the Codex permission mode and the actual host boundary.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,6 +23,7 @@ use forge_core::events::EventPayload;
 use forge_core::ids::AgentId;
 use forge_core::run::{AgentExecution, Usage};
 use forge_core::security::AgentSecurity;
+use forge_core::security::ExecutionSandboxConfig;
 use forge_executor::{EnvPolicy, ExecRequest, ProcessRunner, find_executable};
 use serde::Deserialize;
 
@@ -83,6 +83,7 @@ pub struct CodexAdapter {
     sandbox_mode: String,
     approval_policy: String,
     extra_args: Vec<String>,
+    containerized: bool,
 }
 
 impl CodexAdapter {
@@ -93,6 +94,7 @@ impl CodexAdapter {
             sandbox_mode: DEFAULT_SANDBOX_MODE.to_string(),
             approval_policy: DEFAULT_APPROVAL_POLICY.to_string(),
             extra_args: Vec::new(),
+            containerized: false,
         }
     }
 
@@ -116,6 +118,7 @@ impl CodexAdapter {
                 .setting("extra_args")
                 .map(|raw| raw.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default(),
+            containerized: matches!(config.sandbox, ExecutionSandboxConfig::Required { .. }),
         }
     }
 
@@ -295,6 +298,9 @@ impl AgentAdapter for CodexAdapter {
 
     async fn prepare(&self) -> AgentResult<()> {
         self.validate_config()?;
+        if self.containerized {
+            return Ok(());
+        }
         find_executable(&self.executable).ok_or_else(|| AgentError::ExecutableNotFound {
             agent: "codex".to_string(),
             executable: self.executable.clone(),
@@ -317,12 +323,17 @@ impl AgentAdapter for CodexAdapter {
             command: label.clone(),
         });
 
-        let request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
+        let mut request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
             .with_label(label)
             .with_default_timeout(ctx.timeout);
-        let outcome = ProcessRunner::new(self.env_policy())
-            .run(&request, ctx.events)
-            .await?;
+        if let Some(watch) = &ctx.disk_watch {
+            request = request.with_disk_watch(watch.clone());
+        }
+        let mut runner = ProcessRunner::new(self.env_policy());
+        if let Some(sandbox) = &ctx.sandbox {
+            runner = runner.with_sandbox(sandbox.clone());
+        }
+        let outcome = runner.run(&request, ctx.events).await?;
 
         let stdout_path = write_artifact(&ctx.artifacts_dir, "agent.stdout.log", &outcome.stdout);
         let stderr_path = write_artifact(&ctx.artifacts_dir, "agent.stderr.log", &outcome.stderr);
@@ -335,7 +346,11 @@ impl AgentAdapter for CodexAdapter {
         }
 
         let execution = AgentExecution {
-            status: AgentExecution::classify(outcome.exit_code, outcome.timed_out),
+            status: if outcome.infrastructure_failures.is_empty() {
+                AgentExecution::classify(outcome.exit_code, outcome.timed_out)
+            } else {
+                forge_core::run::AgentExecutionStatus::Cancelled
+            },
             exit_code: outcome.exit_code,
             timed_out: outcome.timed_out,
             started_at,
@@ -349,6 +364,7 @@ impl AgentAdapter for CodexAdapter {
                 .unwrap_or_default(),
             self_report: stream.and_then(|stream| stream.final_message),
             harness_metadata: metadata,
+            infrastructure_failures: outcome.infrastructure_failures.clone(),
         };
 
         ctx.events.emit(EventPayload::AgentFinished {

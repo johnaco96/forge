@@ -187,6 +187,51 @@ pub enum AgentExecutionStatus {
     Cancelled,
 }
 
+/// Typed operational failures which are not evidence that candidate code is
+/// wrong. Multiple facts may coexist with a patch/integrity/evaluation result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InfrastructureFailureKind {
+    DiskExhausted,
+    MemoryLimitExceeded,
+    CpuLimitExceeded,
+    SandboxUnavailable,
+    NetworkPolicyViolation,
+    CredentialUnavailable,
+    StoreUnavailable,
+}
+
+impl InfrastructureFailureKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DiskExhausted => "disk_exhausted",
+            Self::MemoryLimitExceeded => "memory_limit_exceeded",
+            Self::CpuLimitExceeded => "cpu_limit_exceeded",
+            Self::SandboxUnavailable => "sandbox_unavailable",
+            Self::NetworkPolicyViolation => "network_policy_violation",
+            Self::CredentialUnavailable => "credential_unavailable",
+            Self::StoreUnavailable => "store_unavailable",
+        }
+    }
+}
+
+/// One independently observable infrastructure fact about a run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[error("{kind:?}: {detail}")]
+pub struct InfrastructureFailure {
+    pub kind: InfrastructureFailureKind,
+    pub detail: String,
+}
+
+impl InfrastructureFailure {
+    pub fn new(kind: InfrastructureFailureKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
 impl AgentExecutionStatus {
     /// Whether the agent ran far enough to have possibly changed something.
     pub fn produced_work(self) -> bool {
@@ -250,6 +295,10 @@ pub struct AgentExecution {
     /// to record what it knows.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub harness_metadata: BTreeMap<String, String>,
+    /// Operational failures observed while this process ran. These do not
+    /// overwrite independent candidate-integrity or evaluation facts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
 }
 
 impl AgentExecution {
@@ -267,6 +316,7 @@ impl AgentExecution {
             usage: Usage::default(),
             self_report: None,
             harness_metadata: BTreeMap::new(),
+            infrastructure_failures: Vec::new(),
         }
     }
 
@@ -512,6 +562,10 @@ pub struct AgentRun {
     /// Why the run failed or was cancelled. Forge's reason, not the agent's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
+    /// Typed operational causes retained in addition to `failure_reason` and
+    /// candidate/evaluator facts. More than one may apply to the same run.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -571,6 +625,7 @@ impl AgentRun {
             started_at: None,
             finished_at: None,
             failure_reason: None,
+            infrastructure_failures: Vec::new(),
             workspace_path: None,
             branch: None,
             execution: None,
@@ -611,12 +666,16 @@ impl AgentRun {
 
     /// Computes and stores the outcome from the evidence gathered so far.
     pub fn finalize_outcome(&mut self) -> RunOutcome {
-        let outcome = RunOutcome::derive(
-            self.execution.as_ref(),
-            self.patch.as_ref(),
-            self.evaluation_verdict,
-            self.integrity.as_ref(),
-        );
+        let outcome = if self.infrastructure_failures.is_empty() {
+            RunOutcome::derive(
+                self.execution.as_ref(),
+                self.patch.as_ref(),
+                self.evaluation_verdict,
+                self.integrity.as_ref(),
+            )
+        } else {
+            RunOutcome::Errored
+        };
         self.outcome = Some(outcome);
         outcome
     }
@@ -683,6 +742,7 @@ mod tests {
             usage: Usage::default(),
             self_report: None,
             harness_metadata: BTreeMap::new(),
+            infrastructure_failures: Vec::new(),
         }
     }
 

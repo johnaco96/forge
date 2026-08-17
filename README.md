@@ -44,7 +44,8 @@ base commit into a comparative experiment.
 | **Immutable, commit-bound Repository World Model** | ✅ |
 | **Longitudinal repository health and typed trends** | ✅ |
 | **Immutable, evidence-backed engineering policy optimization** | ✅ |
-| Empirical validation campaign (20 real tasks, pre-registered analysis) | 🔬 prepared, blocked on Codex availability |
+| Empirical Tier 1 campaign (20 real paired tasks) | ✅ completed; router selected 0 at the frozen 0.05 margin |
+| Production hardening (OCI containment, recovery, CI/release tooling) | 🧪 1.1.0 candidate; supervised pilot pending |
 
 ---
 
@@ -89,10 +90,25 @@ forge experiments list
 forge export --format jsonl > forge-runs.jsonl
 ```
 
-These commands describe recorded evidence. Forge can also apply the
-deterministic `historical-baseline-v1` policy to its trusted snapshot with
-`forge run task.yaml --agent auto`. It selects only when readiness and the
-score margin permit; otherwise it stops explicitly without running an agent.
+These commands describe recorded evidence. Forge can apply the deterministic
+`historical-baseline-v1` policy without executing an agent:
+
+```bash
+forge run task.yaml --agent recommend
+```
+
+It selects only when readiness and the score margin permit; otherwise it
+abstains. Explicit `--agent auto` is the only routing mode that authorizes
+execution, and it is not approved for unattended production until the
+prospective holdout is complete.
+
+Before a supervised production window, run the read-only diagnostic and take a
+verified store backup:
+
+```bash
+forge doctor
+forge store backup --output /backups/forge.db
+```
 
 Forge also records the engineering policy governing each new run and can build
 bounded, store-backed proposals without changing evaluation truth:
@@ -242,6 +258,14 @@ actually been measured rather than built.
 See [`docs/codex-accounting.md`](docs/codex-accounting.md) for provider token
 evidence, versioned Codex credit derivation, missingness, and the offline
 campaign-enrichment boundary.
+See [`docs/routing-validation.md`](docs/routing-validation.md) for the exact
+Rust replay, Tier 1 zero-selection finding, and prospective holdout.
+See [`docs/security.md`](docs/security.md) and
+[`docs/operations.md`](docs/operations.md) for required OCI containment,
+resource controls, backups, recovery, and incident response.
+See [`docs/production-readiness.md`](docs/production-readiness.md) for the
+conservative readiness matrix and [`docs/external-pilot.md`](docs/external-pilot.md)
+for the supervised pilot that remains to be executed.
 
 ---
 
@@ -450,12 +474,13 @@ database rows migrate to `unknown`, never guessed `live`.
 
 Read this before pointing Forge at anything you care about.
 
-**Candidate changes are isolated in a Git worktree; Forge does not independently
-contain agent processes.** Each run starts in a disposable worktree, so ordinary
-relative edits produce a separate candidate and do not alter the primary checkout. A
-Git worktree is not a sandbox: the agent can use absolute or parent paths and
-write anywhere your user account can. Container isolation is the fix, and it
-is not built yet. Every run report states this posture explicitly.
+**A Git worktree alone does not contain a process.** Development mode
+`containment.mode = "none"` remains available and is visibly unsafe. Production
+configurations use fail-closed `mode = "required"`, which runs agent and
+evaluator commands inside a resource-limited Docker-compatible OCI boundary
+without mounting the user's home. If the runtime, pinned image, network, or
+declared credential is unavailable, Forge refuses to run rather than falling
+back to the host. Every run report states the actual posture.
 
 **Claude Code runs with `bypassPermissions` by default.** An unattended agent
 cannot answer a permission prompt, and anything stricter leaves it unable to run
@@ -470,8 +495,9 @@ process itself still runs as the invoking user and Forge has not placed it in a
 container. `danger-full-access` is configurable but is reported as unrestricted
 and triggers Forge's unconfined-run warning.
 
-**Consequently: run Forge only on repositories and tasks you would be willing
-to run by hand, on a machine where that is acceptable.**
+**Consequently: use host mode only for development tasks you would run by hand.
+Supervised production requires the container mode and the operational gates in
+[`docs/production-readiness.md`](docs/production-readiness.md).**
 
 What Forge *does* guarantee, with tests:
 

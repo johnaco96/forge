@@ -1,0 +1,33 @@
+name: Release artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        os: [macos-14, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.93.0 --profile minimal && rustup default 1.93.0
+      - run: ./scripts/check-version.sh
+      - name: Tag must match package version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "${GITHUB_REF_NAME}" = "v$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml","rb"))["workspace"]["package"]["version"])')"
+      - run: cargo test --workspace --locked
+      - run: cargo build --release --locked -p forge-cli --bin forge
+      - run: ./scripts/package-release.sh target/release/forge dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: forge-${{ matrix.os }}
+          path: dist/*
+          if-no-files-found: error
+

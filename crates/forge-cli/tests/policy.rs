@@ -246,6 +246,7 @@ async fn add_policy_observation(
         usage: Usage::default(),
         self_report: None,
         harness_metadata: Default::default(),
+        infrastructure_failures: Vec::new(),
     });
     run.patch = Some(PatchSummary {
         base_commit: commit.into(),

@@ -1,0 +1,6 @@
+[advisories]
+# RUSTSEC-2023-0071 affects rsa through SQLx's optional MySQL driver. Forge
+# enables SQLite only, and `cargo tree -i rsa --workspace` is empty. The
+# security workflow fails if rsa ever enters the active dependency graph.
+# Owner: Forge release maintainers. Review/expiry: 2026-11-16.
+ignore = ["RUSTSEC-2023-0071"]

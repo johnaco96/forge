@@ -420,7 +420,7 @@ checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "forge-accounting"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "forge-agent"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "forge-cli"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -475,7 +475,7 @@ dependencies = [
 
 [[package]]
 name = "forge-core"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "globset",
@@ -490,7 +490,7 @@ dependencies = [
 
 [[package]]
 name = "forge-eval"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -505,11 +505,14 @@ dependencies = [
 
 [[package]]
 name = "forge-executor"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
+ "async-trait",
  "forge-core",
  "forge-git",
+ "fs2",
  "libc",
+ "serde_json",
  "tempfile",
  "thiserror",
  "tokio",
@@ -518,7 +521,7 @@ dependencies = [
 
 [[package]]
 name = "forge-git"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "forge-core",
  "tempfile",
@@ -528,7 +531,7 @@ dependencies = [
 
 [[package]]
 name = "forge-health"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "forge-core",
@@ -544,7 +547,7 @@ dependencies = [
 
 [[package]]
 name = "forge-policy"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "forge-core",
@@ -557,18 +560,21 @@ dependencies = [
 
 [[package]]
 name = "forge-router"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "forge-core",
  "forge-store",
+ "serde",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
 ]
 
 [[package]]
 name = "forge-runner"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -587,7 +593,7 @@ dependencies = [
 
 [[package]]
 name = "forge-store"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "forge-core",
@@ -602,7 +608,7 @@ dependencies = [
 
 [[package]]
 name = "forge-team"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -625,7 +631,7 @@ dependencies = [
 
 [[package]]
 name = "forge-world"
-version = "0.1.0"
+version = "1.1.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -649,6 +655,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -2151,6 +2167,28 @@ dependencies = [
  "libredox",
  "wasite",
 ]
+
+[[package]]
+name = "winapi"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c839a674fcd7a98952e593242ea400abe93992746761e38641405d28b00f419"
+dependencies = [
+ "winapi-i686-pc-windows-gnu",
+ "winapi-x86_64-pc-windows-gnu",
+]
+
+[[package]]
+name = "winapi-i686-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac3b87c63620426dd9b991e5ce0329eff545bccbbb34f3be09ff6fb6ab51b7b6"
+
+[[package]]
+name = "winapi-x86_64-pc-windows-gnu"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
 
 [[package]]
 name = "windows-core"

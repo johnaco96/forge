@@ -8,6 +8,7 @@
 
 #![deny(rust_2018_idioms)]
 
+pub mod backup;
 pub mod error;
 pub mod experience;
 pub mod health;
@@ -17,6 +18,7 @@ pub mod sqlite;
 pub mod team;
 pub mod world;
 
+pub use backup::{LATEST_MIGRATION_VERSION, StoreVerification};
 pub use error::{StoreError, StoreResult};
 pub use experience::{
     AgentStatistics, AgentTaskOutcomes, CohortStatistics, EXPORT_SCHEMA_VERSION,

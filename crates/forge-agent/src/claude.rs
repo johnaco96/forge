@@ -7,11 +7,10 @@
 //!
 //! # Security
 //!
-//! Claude Code runs shell commands. Forge directs it to a disposable Git
-//! worktree and filters credentials out of the environment it inherits. That
-//! isolates the candidate changes; it does not contain the process. A determined process can write
-//! anywhere the user can. Real containment arrives with container isolation;
-//! until then, run Forge only on tasks and repositories you would run by hand.
+//! Claude Code runs shell commands. Forge always directs it to a disposable Git
+//! worktree and filters credentials. In containment-required configurations
+//! the same invocation is wrapped in the OCI boundary; explicit development
+//! mode remains an uncontained host process and is reported as such.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,6 +23,7 @@ use forge_core::events::EventPayload;
 use forge_core::ids::AgentId;
 use forge_core::run::{AgentExecution, Usage};
 use forge_core::security::AgentSecurity;
+use forge_core::security::ExecutionSandboxConfig;
 use forge_executor::{EnvPolicy, ExecRequest, ProcessRunner, find_executable};
 use serde::Deserialize;
 
@@ -65,6 +65,7 @@ pub struct ClaudeAdapter {
     model: Option<String>,
     permission_mode: String,
     extra_args: Vec<String>,
+    containerized: bool,
 }
 
 impl ClaudeAdapter {
@@ -74,6 +75,7 @@ impl ClaudeAdapter {
             model: None,
             permission_mode: DEFAULT_PERMISSION_MODE.to_string(),
             extra_args: Vec::new(),
+            containerized: false,
         }
     }
 
@@ -101,6 +103,7 @@ impl ClaudeAdapter {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default(),
+            containerized: matches!(config.sandbox, ExecutionSandboxConfig::Required { .. }),
         }
     }
 
@@ -221,6 +224,9 @@ impl AgentAdapter for ClaudeAdapter {
     }
 
     async fn prepare(&self) -> AgentResult<()> {
+        if self.containerized {
+            return Ok(());
+        }
         find_executable(&self.executable).ok_or_else(|| AgentError::ExecutableNotFound {
             agent: "claude".to_string(),
             executable: self.executable.clone(),
@@ -245,10 +251,16 @@ impl AgentAdapter for ClaudeAdapter {
             command: label.clone(),
         });
 
-        let runner = ProcessRunner::new(self.env_policy());
-        let request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
+        let mut runner = ProcessRunner::new(self.env_policy());
+        if let Some(sandbox) = &ctx.sandbox {
+            runner = runner.with_sandbox(sandbox.clone());
+        }
+        let mut request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
             .with_label(label)
             .with_default_timeout(ctx.timeout);
+        if let Some(watch) = &ctx.disk_watch {
+            request = request.with_disk_watch(watch.clone());
+        }
 
         // The event this emits is the agent invocation itself; the commands
         // Claude runs internally are not visible to Forge.
@@ -257,7 +269,11 @@ impl AgentAdapter for ClaudeAdapter {
         let stdout_path = write_artifact(&ctx.artifacts_dir, "agent.stdout.log", &outcome.stdout);
         let stderr_path = write_artifact(&ctx.artifacts_dir, "agent.stderr.log", &outcome.stderr);
 
-        let status = AgentExecution::classify(outcome.exit_code, outcome.timed_out);
+        let status = if outcome.infrastructure_failures.is_empty() {
+            AgentExecution::classify(outcome.exit_code, outcome.timed_out)
+        } else {
+            forge_core::run::AgentExecutionStatus::Cancelled
+        };
         let report = ClaudeResult::parse(&outcome.stdout);
 
         let execution =
@@ -276,6 +292,7 @@ impl AgentAdapter for ClaudeAdapter {
                 harness_metadata: report.as_ref().map(ClaudeResult::metadata).unwrap_or_else(
                     || BTreeMap::from([("claude.result_json".to_string(), "unparsed".to_string())]),
                 ),
+                infrastructure_failures: outcome.infrastructure_failures.clone(),
             };
 
         ctx.events.emit(EventPayload::AgentFinished {

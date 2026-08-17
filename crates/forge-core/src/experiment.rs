@@ -671,6 +671,7 @@ mod tests {
             },
             self_report: None,
             harness_metadata: BTreeMap::new(),
+            infrastructure_failures: Vec::new(),
         });
         run
     }
@@ -706,6 +707,7 @@ mod tests {
                 metrics,
                 warnings: Vec::new(),
                 execution_error: None,
+                infrastructure_failures: Vec::new(),
             }],
             now,
             now,

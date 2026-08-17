@@ -4,6 +4,9 @@ pub type ExecResult<T> = Result<T, ExecError>;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExecError {
+    #[error(transparent)]
+    Infrastructure(#[from] forge_core::run::InfrastructureFailure),
+
     #[error("failed to start `{program}`")]
     Spawn {
         program: String,

@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::ids::AgentId;
+use crate::security::ExecutionSandboxConfig;
 
 /// Whether Forge can actually run this agent yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,14 +69,32 @@ pub struct AgentDescriptor {
 /// configuration is.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentConfig {
+    /// Version of the deterministic fingerprint contract. Historical records
+    /// predate this field and deserialize as v1; new runs use v2 and therefore
+    /// never silently pool with observations whose effective configuration was
+    /// only partially known.
+    #[serde(default = "legacy_fingerprint_version")]
+    pub fingerprint_version: u8,
     pub agent_id: AgentId,
     pub harness: String,
+    /// Version reported by the configured harness, when explicitly captured.
+    /// Missing historical values remain missing rather than being inferred.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
+    /// Fingerprint of the immutable engineering policy that governed this
+    /// execution. It binds routing evidence to execution-policy semantics
+    /// without duplicating that domain model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_policy_fingerprint: Option<String>,
+    /// Actual host-containment and resource boundary used for this run.
+    #[serde(default)]
+    pub sandbox: ExecutionSandboxConfig,
     /// Harness-specific settings, kept opaque so adding a knob does not require
     /// a schema change.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -85,11 +104,15 @@ pub struct AgentConfig {
 impl AgentConfig {
     pub fn new(agent_id: AgentId, harness: impl Into<String>) -> Self {
         Self {
+            fingerprint_version: 2,
             agent_id,
             harness: harness.into(),
+            harness_version: None,
             model: None,
             tools: Vec::new(),
             timeout_secs: None,
+            execution_policy_fingerprint: None,
+            sandbox: ExecutionSandboxConfig::default(),
             settings: BTreeMap::new(),
         }
     }
@@ -123,6 +146,12 @@ impl AgentConfig {
         hasher.update([0]);
         hasher.update(self.harness.as_bytes());
         hasher.update([0]);
+        if self.fingerprint_version >= 2 {
+            hasher.update([self.fingerprint_version]);
+            hasher.update([0]);
+            hasher.update(self.harness_version.as_deref().unwrap_or("").as_bytes());
+            hasher.update([0]);
+        }
         hasher.update(self.model.as_deref().unwrap_or("").as_bytes());
         hasher.update([0]);
         for tool in &self.tools {
@@ -136,9 +165,34 @@ impl AgentConfig {
             hasher.update(value.as_bytes());
             hasher.update([0x1f]);
         }
+        if self.fingerprint_version >= 2 {
+            hasher.update([0]);
+            hasher.update(
+                self.execution_policy_fingerprint
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes(),
+            );
+            hasher.update([0]);
+            hasher.update(
+                self.timeout_secs
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+                    .as_bytes(),
+            );
+            hasher.update([0]);
+            hasher.update(
+                serde_json::to_vec(&self.sandbox)
+                    .expect("sandbox configuration serializes deterministically"),
+            );
+        }
         let digest = hasher.finalize();
         digest[..8].iter().map(|b| format!("{b:02x}")).collect()
     }
+}
+
+fn legacy_fingerprint_version() -> u8 {
+    1
 }
 
 #[cfg(test)]
@@ -155,14 +209,33 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_ignores_timeout_but_tracks_model() {
-        // Timeout is an execution budget, not a capability of the configuration,
-        // so it must not split otherwise-comparable observations.
+    fn fingerprint_versions_preserve_legacy_timeout_semantics() {
+        // Historical v1 identity ignored timeout. Preserve that contract for
+        // old evidence, while v2 treats the effective execution budget as
+        // decision-relevant.
+        let mut legacy = config();
+        legacy.fingerprint_version = 1;
+        let with_timeout = legacy.clone().with_timeout_secs(60);
+        assert_eq!(legacy.fingerprint(), with_timeout.fingerprint());
+
         let with_timeout = config().with_timeout_secs(60);
-        assert_eq!(config().fingerprint(), with_timeout.fingerprint());
+        assert_ne!(config().fingerprint(), with_timeout.fingerprint());
 
         let other_model = config().with_model("sonnet");
         assert_ne!(config().fingerprint(), other_model.fingerprint());
+    }
+
+    #[test]
+    fn historical_unknowns_do_not_pool_with_effective_v2_identity() {
+        let historical: AgentConfig =
+            serde_json::from_str(r#"{"agent_id":"claude","harness":"claude-code","model":"opus"}"#)
+                .unwrap();
+        assert_eq!(historical.fingerprint_version, 1);
+
+        let mut effective = config();
+        effective.harness_version = Some("2.1.223".into());
+        effective.execution_policy_fingerprint = Some("policy-config-v2".into());
+        assert_ne!(historical.fingerprint(), effective.fingerprint());
     }
 
     #[test]

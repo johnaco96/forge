@@ -41,6 +41,8 @@ pub const POLICY_SCHEMA_VERSION: &str = "policy-v1";
 pub const POLICY_OBJECTIVE_VERSION: &str = "policy-objective-v1";
 /// Identity of the baseline optimizer.
 pub const POLICY_OPTIMIZER_VERSION: &str = "policy-baseline-v1";
+/// Identity of the policy subset which materially changes an execution.
+pub const EFFECTIVE_EXECUTION_POLICY_VERSION: &str = "effective-execution-policy-v1";
 
 // ------------------------------------------------------------------ guardrails
 
@@ -1337,6 +1339,56 @@ impl EngineeringPolicy {
         format!("{:x}", digest.finalize())[..32].to_string()
     }
 
+    /// Deterministic identity over the subset which can materially change the
+    /// result of one execution.
+    ///
+    /// Routing thresholds, optimizer objectives, lifecycle metadata, and
+    /// exploration cadence affect how a run is selected or judged later; they
+    /// do not change what the selected worker receives or how it executes.
+    /// Excluding them prevents needless routing cold starts while context,
+    /// execution, review, resource, and applicable team settings remain bound.
+    pub fn execution_fingerprint(&self) -> String {
+        let mut digest = Sha256::new();
+        let field = |value: &str, digest: &mut Sha256| {
+            digest.update(value.as_bytes());
+            digest.update([0x1f]);
+        };
+
+        field(EFFECTIVE_EXECUTION_POLICY_VERSION, &mut digest);
+        field(&self.schema_version, &mut digest);
+        field(&self.repository, &mut digest);
+        field(&self.context.max_world_facts.to_string(), &mut digest);
+        field(
+            &self.context.include_failure_history.to_string(),
+            &mut digest,
+        );
+        field(self.context.selection_strategy.as_str(), &mut digest);
+        field(self.execution.as_str(), &mut digest);
+        if self.execution == ExecutionStrategy::Team {
+            field(self.team.plan_template.as_str(), &mut digest);
+            field(&self.team.max_parallel_nodes.to_string(), &mut digest);
+            field(
+                &self.team.stop_on_required_node_failure.to_string(),
+                &mut digest,
+            );
+        }
+        field(
+            &self.review.advisory_review_enabled.to_string(),
+            &mut digest,
+        );
+        if self.review.advisory_review_enabled {
+            field(&self.review.advisory_review_nodes.to_string(), &mut digest);
+        }
+        field(&self.resources.timeout_secs.to_string(), &mut digest);
+        field(&self.resources.max_retries.to_string(), &mut digest);
+        field(&optional_float(self.resources.max_cost_usd), &mut digest);
+        for guardrail in self.guardrails.iter() {
+            field(guardrail.as_str(), &mut digest);
+        }
+
+        format!("{:x}", digest.finalize())[..32].to_string()
+    }
+
     /// Advances the lifecycle.
     pub fn transition_to(&mut self, next: PolicyStatus) -> Result<(), PolicyError> {
         if !self.status.can_transition_to(next) {
@@ -1980,6 +2032,27 @@ mod tests {
         for _ in 0..5 {
             assert_eq!(policy.fingerprint(), first);
         }
+    }
+
+    #[test]
+    fn execution_fingerprint_tracks_execution_not_selection_or_objective() {
+        let baseline = policy();
+        let identity = baseline.execution_fingerprint();
+
+        let mut selection_only = baseline.clone();
+        selection_only.routing.minimum_score_margin = 0.99;
+        selection_only.exploration.policy = ExplorationPolicy::None;
+        selection_only.objective.observation_window_days += 1;
+        selection_only.team.max_parallel_nodes += 1;
+        assert_eq!(selection_only.execution_fingerprint(), identity);
+
+        let mut changed_context = baseline.clone();
+        changed_context.context.max_world_facts += 1;
+        assert_ne!(changed_context.execution_fingerprint(), identity);
+
+        let mut changed_resources = baseline;
+        changed_resources.resources.timeout_secs += 1;
+        assert_ne!(changed_resources.execution_fingerprint(), identity);
     }
 
     // -------------------------------------------------------------- approval

@@ -14,6 +14,8 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::run::InfrastructureFailure;
+
 use crate::events::EvaluationSubject;
 use crate::ids::RunId;
 
@@ -388,6 +390,10 @@ pub struct CheckResult {
     /// and reported findings is a normal `Fail`, not an execution error.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_error: Option<String>,
+    /// Operational causes which made the evaluator inconclusive or forced its
+    /// subprocess to stop. Kept separate from candidate-code failures.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
 }
 
 fn required_by_default() -> bool {
@@ -416,6 +422,7 @@ impl CheckResult {
             metrics: Vec::new(),
             warnings: Vec::new(),
             execution_error: Some(error),
+            infrastructure_failures: Vec::new(),
         }
     }
 }
@@ -642,6 +649,7 @@ mod tests {
             )],
             warnings: Vec::new(),
             execution_error: None,
+            infrastructure_failures: Vec::new(),
         }
     }
 

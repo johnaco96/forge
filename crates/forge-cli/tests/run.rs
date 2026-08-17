@@ -662,6 +662,36 @@ fn auto_agent_stops_without_forcing_a_choice_when_history_is_absent() {
 }
 
 #[test]
+fn disk_preflight_refuses_before_agent_execution_and_persists_typed_cause() {
+    let fixture = Fixture::new();
+    let stub = fixture.stub("echo 2 > value.txt");
+    fixture.use_stub(&stub);
+    let config_path = fixture.repo.join(".forge/config.toml");
+    let config = std::fs::read_to_string(&config_path).unwrap().replace(
+        "minimum_free_bytes = 1073741824",
+        "minimum_free_bytes = 18446744073709551615",
+    );
+    std::fs::write(config_path, config).unwrap();
+    let task = fixture.write_task("low-disk.yaml", &task_yaml("  tests:\n    command: true\n"));
+
+    let output = fixture.forge(&["run", &task, "--agent", "claude"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(
+        stub.recorded_args().is_empty(),
+        "agent unexpectedly executed"
+    );
+
+    let export = fixture.forge(&["export", "--format", "jsonl"]);
+    let record: serde_json::Value = serde_json::from_str(stdout(&export).trim()).unwrap();
+    assert_eq!(record["outcome"], "errored");
+    assert_eq!(
+        record["infrastructure_failures"][0]["kind"],
+        "disk_exhausted"
+    );
+    assert!(record["workspace_path"].is_null());
+}
+
+#[test]
 fn auto_routes_from_deterministic_history_through_the_normal_codex_pipeline() {
     let fixture = Fixture::new();
     let claude_state = fixture.temp.path().join("routing-claude.count");
@@ -728,6 +758,22 @@ fn auto_routes_from_deterministic_history_through_the_normal_codex_pipeline() {
         assert_eq!(fail.status.code(), Some(2), "{}", stderr(&fail));
     }
 
+    let recommended = fixture.forge(&["run", &task, "--agent", "recommend"]);
+    let recommendation = stdout(&recommended);
+    assert_eq!(recommended.status.code(), Some(3), "{recommendation}");
+    assert!(
+        recommendation.contains("SELECTED codex"),
+        "{recommendation}"
+    );
+    assert!(
+        recommendation.contains("RECOMMENDATION ONLY"),
+        "{recommendation}"
+    );
+    assert!(
+        recommendation.contains("No agent was executed"),
+        "{recommendation}"
+    );
+
     let routed = fixture.forge(&["run", &task, "--agent", "auto"]);
     let text = stdout(&routed);
     assert!(routed.status.success(), "{text}\n{}", stderr(&routed));
@@ -735,7 +781,7 @@ fn auto_routes_from_deterministic_history_through_the_normal_codex_pipeline() {
     assert!(text.contains("6 eligible runs"), "{text}");
     assert!(text.contains("SyntheticProvenance: 6"), "{text}");
     assert!(text.contains("historical-baseline-v1"), "{text}");
-    assert!(text.contains("AUTO → codex (RD-0001)"), "{text}");
+    assert!(text.contains("AUTO → codex (RD-0002)"), "{text}");
     assert!(text.contains("Overall\n  PASS"), "{text}");
 
     // The first auto-selected genuine run is itself eligible live evidence.
@@ -756,7 +802,7 @@ fn auto_routes_from_deterministic_history_through_the_normal_codex_pipeline() {
     );
     assert_eq!(
         records.last().unwrap()["selection_source"]["decision_id"],
-        "RD-0002"
+        "RD-0003"
     );
 }
 

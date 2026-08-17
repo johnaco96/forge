@@ -355,12 +355,13 @@ impl TeamCoordinator {
         plan: &forge_core::ValidatedTeamPlan,
     ) -> TeamResult<()> {
         let runner = self.runner();
+        let active_policy = runner.ensure_active_policy().await?;
         for node in &plan.plan.nodes {
             let Some(assignment) = &node.assignment else {
                 continue;
             };
             let forge_core::TeamAssignmentStrategy::Explicit { agent } = assignment else {
-                self.auto_candidates(task, None, &node.required_capabilities)
+                self.auto_candidates(task, None, &node.required_capabilities, &active_policy)
                     .map_err(|_| TeamError::AssignmentUnavailable(node.node_id.clone()))?;
                 continue;
             };
@@ -503,26 +504,41 @@ impl TeamCoordinator {
                 ))
             }
             Some(forge_core::TeamAssignmentStrategy::Auto) => {
-                let candidates =
-                    match self.auto_candidates(task, timeout, &definition.required_capabilities) {
-                        Ok(candidates) => candidates,
-                        Err(TeamError::Router(error)) => {
-                            return Err(TeamError::AssignmentBlocked {
-                                node: definition.node_id.clone(),
-                                reason: error.to_string(),
-                                decision_id: None,
-                            });
-                        }
-                        Err(error) => return Err(error),
-                    };
+                // The router must score the exact configuration the selected
+                // node will execute. In particular, v2 configuration identity
+                // includes the active execution-policy fingerprint.
+                let active_policy = self.runner().ensure_active_policy().await?;
+                let candidates = match self.auto_candidates(
+                    task,
+                    timeout,
+                    &definition.required_capabilities,
+                    &active_policy,
+                ) {
+                    Ok(candidates) => candidates,
+                    Err(TeamError::Router(error)) => {
+                        return Err(TeamError::AssignmentBlocked {
+                            node: definition.node_id.clone(),
+                            reason: error.to_string(),
+                            decision_id: None,
+                        });
+                    }
+                    Err(error) => return Err(error),
+                };
                 let revision = TaskRevision::snapshot(task.clone())?;
                 self.store.upsert_task(task).await?;
+                let mut routing_config = self.config.routing.clone();
+                routing_config.minimum_total_evidence =
+                    active_policy.routing.minimum_total_evidence;
+                routing_config.minimum_agent_evidence =
+                    active_policy.routing.minimum_agent_evidence;
+                routing_config.minimum_score_margin = active_policy.routing.minimum_score_margin;
+                routing_config.exploration_policy = active_policy.exploration.policy;
                 let routing = RoutingRequest::new(
                     revision,
                     candidates,
                     RoutingEvidencePolicy::default(),
-                    self.config.routing.minimum_evidence(),
-                    self.config.routing.exploration_policy,
+                    routing_config.minimum_evidence(),
+                    routing_config.exploration_policy,
                     Utc::now(),
                 );
                 let world_model_snapshot_id = if self.config.world_model.enabled {
@@ -534,7 +550,7 @@ impl TeamCoordinator {
                     None
                 };
                 let record = RoutingContract::new(self.store.clone())
-                    .route_with_world_model(&routing, &self.config.routing, world_model_snapshot_id)
+                    .route_with_world_model(&routing, &routing_config, world_model_snapshot_id)
                     .await?;
                 match &record.decision {
                     RoutingDecision::Selected { agent, .. } => Ok((
@@ -574,6 +590,7 @@ impl TeamCoordinator {
         task: &EngineeringTask,
         timeout: Option<Duration>,
         capabilities: &[Capability],
+        policy: &forge_core::EngineeringPolicy,
     ) -> TeamResult<forge_core::CandidateAgentSet> {
         let runner = self.runner();
         let mut requested = Vec::new();
@@ -585,7 +602,7 @@ impl TeamCoordinator {
         {
             let mut run_request = RunRequest::new(task.clone(), descriptor.agent_id.as_str());
             run_request.timeout = timeout;
-            let config = runner.agent_config(&run_request)?;
+            let config = runner.agent_config_for_policy(&run_request, policy)?;
             let adapter = self
                 .registry
                 .adapter(descriptor.agent_id.as_str(), &config)?;

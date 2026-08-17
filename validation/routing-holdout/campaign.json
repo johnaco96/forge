@@ -1,0 +1,66 @@
+{
+  "campaign_schema_version": 1,
+  "campaign_id": "routing-holdout-v1",
+  "status": "preregistered_not_executed",
+  "purpose": "Prospective validation of Forge routing after Tier 1 calibration",
+  "independence": {
+    "tier1_outcomes_may_select_threshold": false,
+    "tier1_tasks_are_excluded": true,
+    "task_outcomes_must_be_unseen_at_selection": true
+  },
+  "repository_baseline": {
+    "rule": "record one immutable full commit SHA for each selected task before any routing decision",
+    "mutable_refs_forbidden": true
+  },
+  "router": {
+    "version": "historical-baseline-v1",
+    "evidence_policy_version": "trusted-routing-evidence-v1",
+    "minimum_score_margin": 0.05,
+    "minimum_total_evidence": 10,
+    "minimum_agent_evidence": 3,
+    "objective": "trustworthy_pass_probability",
+    "configuration_frozen_after_first_task": true
+  },
+  "execution": {
+    "mode": "recommendation",
+    "automatic_execution": false,
+    "decision_before_ground_truth": true,
+    "persist_decision_or_abstention": true,
+    "agents": ["claude", "codex"],
+    "paired_independent_runs": true,
+    "fallback": "abstain and run both agents; never substitute a manual pick as a router decision",
+    "merge": "human_approval_only",
+    "policy_auto_promotion": false,
+    "team_auto_dispatch": false
+  },
+  "metrics": [
+    "coverage",
+    "selected_agent_trustworthy_pass_rate",
+    "decision_correctness",
+    "abstention_rate",
+    "regret",
+    "runtime_effect",
+    "provider_usage_effect"
+  ],
+  "acceptance_review": {
+    "minimum_tasks": 10,
+    "maximum_tasks": 20,
+    "automatic_mode_requires_separate_human_review": true,
+    "no_threshold_change_after_outcomes": true
+  },
+  "task_slots": [
+    {"slot": "RH-001", "category": "correctness_bugfix", "language": "rust", "status": "unselected"},
+    {"slot": "RH-002", "category": "correctness_bugfix", "language": "python", "status": "unselected"},
+    {"slot": "RH-003", "category": "correctness_bugfix", "language": "typescript", "status": "unselected"},
+    {"slot": "RH-004", "category": "test_reliability", "language": "rust", "status": "unselected"},
+    {"slot": "RH-005", "category": "test_reliability", "language": "python", "status": "unselected"},
+    {"slot": "RH-006", "category": "maintenance_refactor", "language": "typescript", "status": "unselected"},
+    {"slot": "RH-007", "category": "performance", "language": "rust", "status": "unselected"},
+    {"slot": "RH-008", "category": "performance", "language": "python", "status": "unselected"},
+    {"slot": "RH-009", "category": "security_hardening", "language": "typescript", "status": "unselected"},
+    {"slot": "RH-010", "category": "build_tooling", "language": "rust", "status": "unselected"},
+    {"slot": "RH-011", "category": "build_tooling", "language": "python", "status": "unselected"},
+    {"slot": "RH-012", "category": "documentation_with_executable_checks", "language": "typescript", "status": "unselected"}
+  ]
+}
+

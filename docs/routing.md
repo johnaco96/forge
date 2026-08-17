@@ -6,6 +6,18 @@ Forge can select one currently available agent configuration with:
 forge run task.yaml --agent auto
 ```
 
+Automatic execution is explicit-only. The operational modes are:
+
+| Mode | Invocation | Effect |
+|---|---|---|
+| manual | `--agent <id>` (or the configured default) | bypasses learned selection and runs that agent |
+| recommend | `--agent recommend` | persists and prints the real routing decision, then stops before execution |
+| automatic | `--agent auto` | executes a selected configuration through the ordinary run pipeline |
+
+Even if an active policy enables learned routing, omitting `--agent` enters
+`recommend`, not `automatic`. The bootstrap policy keeps learned routing off.
+Prospective holdout validation is required before changing this safety posture.
+
 Phase 4B builds directly on the Phase 4A trust boundary. The router receives an
 immutable `TaskRevision`, exact current candidate configuration fingerprints,
 the versioned evidence policy, readiness thresholds, exploration policy, and a
@@ -27,6 +39,20 @@ the provider name. A historical run from another model, harness, permission
 mode, executable setting, or other stable configuration is reported as a
 configuration-mismatch exclusion. Forge selects only among current registered
 configurations; it does not search arbitrary configurations.
+
+New records use the versioned effective-configuration fingerprint v2. It binds
+agent identity, harness and recorded harness version, explicit model, tools,
+harness settings (including executable and extra arguments), effective
+timeout, and the execution-relevant subset of the active engineering policy.
+That policy subset covers context, execution shape, applicable team/review
+behavior, resources, and fixed guardrails. Routing thresholds, optimizer
+objectives, lifecycle metadata, and exploration cadence are intentionally not
+execution identity. Historical records without these fields remain v1 unknowns
+and never silently pool with v2 records.
+
+`model` and `harness_version` remain optional because providers may not expose
+them. Operators should set them explicitly for reproducible production
+cohorts; Forge does not invent values for historical evidence.
 
 PASS is positive and FAIL is negative. INCONCLUSIVE and NO_CHANGE remain
 separate unresolved records: they appear in counts and explanations but do not
@@ -115,6 +141,53 @@ version, policy configuration, cutoff, and fingerprint reproduce the same
 decision. Runs added after the cutoff cannot rewrite a persisted decision.
 Phase 0–4A databases migrate in place; older runs become manual selection and
 keep their existing immutable task revisions and provenance.
+
+The historical cutoff is completion-aware. A row may be observed because its
+run was created by the cutoff, but it is eligible only when the run's terminal
+timestamp and, when required, the independent evaluation's completion
+timestamp are both at or before the cutoff. A completed run without a terminal
+timestamp fails closed. All mutable run, immutable task-revision, and evaluation
+fields are joined in one SQLite statement, so one decision cannot stitch
+together multiple database snapshots. Health, policy, later routing decisions,
+and world-model facts are not scoring inputs to `historical-baseline-v1`; an
+exact world-model snapshot ID may be recorded as non-scoring provenance.
+
+## Routing objective contract
+
+`historical-baseline-v1` optimizes one primary quantity only: the estimated
+probability of a trustworthy Forge PASS for the exact candidate execution
+configuration. Hard evidence, integrity, provenance, availability, and
+capability rules constrain the candidate/evidence set before scoring.
+
+Runtime, provider cost or credits, benchmark deltas, and integrity history are
+reported evidence dimensions, not hidden terms in the routing score. Integrity
+is a gate rather than a tradeable preference. Consequently, the router is not
+expected to predict a campaign winner decided only by runtime or a secondary
+benchmark when both candidates pass.
+
+Production V1 should preserve success-probability-only routing. A later policy
+may use a documented lexicographic contract—maximize trustworthy success under
+hard safety constraints, then prefer cost/runtime only among candidates proven
+sufficiently equivalent—but must not introduce an opaque scalar. Such a change
+requires a new router version and prospective validation.
+
+## Exact historical replay
+
+`forge-router-replay` reconstructs each pre-decision database in a temporary
+SQLite store, imports only evidence which existed at that instant, invokes the
+production store/router contract, and emits either full decision JSONL or a
+compact summary:
+
+```bash
+cargo run -p forge-router --bin forge-router-replay -- \
+  --input .forge/validation-archive/tier1-master.jsonl --summary
+```
+
+The operational ledger is never opened. Ledger-local run IDs are remapped in a
+stable temporal order, while task revisions, base commits, timestamps,
+configuration fingerprints, provenance, run outcomes, evaluations, and patches
+are preserved. The same export and parameters produce the same compact replay
+bytes.
 
 ## CLI behavior
 

@@ -9,9 +9,11 @@ itself:
 > Does Forge's architecture actually improve autonomous software-engineering
 > outcomes under real use?
 
-Everything here is a **question**, not a claim. No result in this directory is
-real until a real agent produced it against a real repository and Forge
-evaluated it independently.
+Everything here began as a **question**, not a claim. Tier 1 has since completed
+with 20 real paired tasks and 40 live-agent runs; immutable analysis artifacts
+are under validation/analysis/tier1/. The original campaign manifest and
+pre-registration language are retained as historical protocol, not current
+project status.
 
 ---
 
@@ -20,9 +22,9 @@ evaluated it independently.
 These are not stylistic preferences. Violating any of them invalidates the
 campaign.
 
-1. **No fabricated agent results.** Codex is unavailable as of the campaign
-   baseline. No Codex row exists anywhere in `results/` until Codex actually
-   runs. A missing measurement stays missing.
+1. **No fabricated agent results.** Codex was unavailable when this protocol
+   was written. The later Tier 1 archive contains only the real Codex executions
+   that subsequently occurred. A missing measurement stays missing.
 2. **No synthetic fixtures as empirical evidence.** `fixtures/test-repositories/median`
    and every `execution_provenance: synthetic` run verify Forge's plumbing.
    They are excluded from every agent-comparison statistic. Forge already
@@ -48,10 +50,12 @@ campaign.
 | Analysis rules pre-registered (before any Codex result) | ✅ |
 | Campaign manifest | ✅ |
 | Raw results isolated from participant-visible history | ✅ |
-| Campaign baseline frozen | ⏳ pending review of the hardening release |
+| Campaign baseline frozen | ✅ v1.0.1 validation baseline |
 | Claude adapter available | ✅ |
-| Codex adapter configured, binary unavailable | ⏸ blocked on Codex access |
-| Paired Claude/Codex campaign | ⏳ not started |
+| Claude and Codex live execution | ✅ completed for Tier 1 |
+| Paired Claude/Codex campaign | ✅ 20 tasks / 40 runs |
+| Tier 1 analysis | ✅ immutable artifacts generated |
+| Prospective routing holdout | 📝 preregistered, not executed |
 | Claude-only dogfooding | see `results/README.md` |
 
 ---
@@ -108,7 +112,7 @@ validation/
     campaign-clone.sh    materialize one isolated participant repository
     test-isolation.sh    prove participant isolation (deterministic, no agent)
     run-dogfood.sh       Claude-only single-agent runs (capped)
-    run-campaign.sh      paired Claude/Codex campaign (blocked on Codex)
+    run-campaign.sh      paired Claude/Codex campaign runner
     analyze.sh           deterministic analysis over exported JSONL
   results/
     README.md            where results live and how to read them (no run output)
@@ -125,7 +129,11 @@ reproducible from a tag.
 
 ---
 
-## Baseline
+## Baseline (historical pre-run text)
+
+The paragraphs below record the state when the protocol was authored. The
+campaign later froze and ran from the validation baseline; they are retained to
+show that the baseline was not silently selected after outcomes.
 
 The formal campaign has **no baseline yet**, and `campaign.yaml` carries
 `baseline_commit: null` with `baseline_frozen: false` so that cannot be

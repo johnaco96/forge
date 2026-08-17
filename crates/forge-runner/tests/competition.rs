@@ -174,6 +174,7 @@ impl AgentAdapter for FakeAgent {
             },
             self_report: None,
             harness_metadata: Default::default(),
+            infrastructure_failures: Vec::new(),
         })
     }
 }

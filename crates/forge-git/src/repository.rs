@@ -46,6 +46,23 @@ impl Repository {
         &self.root
     }
 
+    /// Canonical shared Git metadata directory.
+    ///
+    /// Linked worktrees use a small per-worktree `.git` file which points
+    /// into this directory. Containerized commands need the shared directory
+    /// mounted read-only so ordinary Git inspection still works without
+    /// exposing the operator's whole repository checkout.
+    pub fn git_common_dir(&self) -> GitResult<PathBuf> {
+        let raw = self.git(["rev-parse", "--git-common-dir"])?;
+        let path = PathBuf::from(raw.trim());
+        let resolved = if path.is_absolute() {
+            path
+        } else {
+            self.root.join(path)
+        };
+        canonicalize(&resolved)
+    }
+
     /// Directory name of the repository, used as the default logical name.
     pub fn name(&self) -> String {
         self.root

@@ -131,6 +131,14 @@ pub enum EventPayload {
         branch: String,
         base_commit: String,
     },
+    SandboxPrepared {
+        boundary: String,
+    },
+    SandboxCleaned,
+    InfrastructureFailureObserved {
+        kind: crate::run::InfrastructureFailureKind,
+        detail: String,
+    },
     AgentStarted {
         command: String,
     },
@@ -251,6 +259,9 @@ impl EventPayload {
         match self {
             Self::RunStarted { .. } => "RunStarted",
             Self::WorkspaceCreated { .. } => "WorkspaceCreated",
+            Self::SandboxPrepared { .. } => "SandboxPrepared",
+            Self::SandboxCleaned => "SandboxCleaned",
+            Self::InfrastructureFailureObserved { .. } => "InfrastructureFailureObserved",
             Self::AgentStarted { .. } => "AgentStarted",
             Self::PromptSubmitted { .. } => "PromptSubmitted",
             Self::FileRead { .. } => "FileRead",
@@ -460,6 +471,14 @@ mod tests {
                 path: PathBuf::from("/tmp/ws"),
                 branch: "forge/run-1".into(),
                 base_commit: "a73cf21".into(),
+            },
+            EventPayload::SandboxPrepared {
+                boundary: "Docker-compatible OCI".into(),
+            },
+            EventPayload::SandboxCleaned,
+            EventPayload::InfrastructureFailureObserved {
+                kind: crate::run::InfrastructureFailureKind::DiskExhausted,
+                detail: "emergency floor".into(),
             },
             EventPayload::AgentStarted {
                 command: "claude -p".into(),

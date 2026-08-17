@@ -838,6 +838,7 @@ mod tests {
             metrics,
             warnings: Vec::new(),
             execution_error: None,
+            infrastructure_failures: Vec::new(),
         }
     }
 

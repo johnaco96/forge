@@ -239,6 +239,7 @@ impl AgentAdapter for FakeAgent {
             // Always claims success. Nothing downstream may believe it.
             self_report: Some(self.self_report.clone()),
             harness_metadata: Default::default(),
+            infrastructure_failures: Vec::new(),
         };
 
         match &self.behavior {

@@ -44,6 +44,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run read-only repository, store, capacity, sandbox, and agent preflight checks.
+    Doctor,
+
     /// Prepare this repository for Forge.
     Init {
         /// Rewrite configuration that already exists.
@@ -199,6 +202,35 @@ enum Command {
     Policy {
         #[command(subcommand)]
         command: PolicyCommand,
+    },
+
+    /// Back up, verify, and restore the SQLite experience ledger.
+    Store {
+        #[command(subcommand)]
+        command: StoreCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum StoreCommand {
+    /// Create and verify a consistent SQLite backup (including committed WAL data).
+    Backup {
+        #[arg(long, value_name = "PATH")]
+        output: PathBuf,
+    },
+    /// Run SQLite integrity, foreign-key, schema, and readability checks.
+    Verify {
+        /// Store or backup to verify. Defaults to this repository's active store.
+        #[arg(long, value_name = "PATH")]
+        path: Option<PathBuf>,
+    },
+    /// Restore a verified backup through a separately migrated staging store.
+    Restore {
+        #[arg(long, value_name = "PATH")]
+        from: PathBuf,
+        /// Explicitly authorize replacing an existing active store.
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -408,6 +440,15 @@ const EXIT_ROUTING_STOPPED: u8 = 3;
 
 async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
     match cli.command {
+        Command::Doctor => {
+            let result = commands::doctor::run(cli.repo).await?;
+            Ok(match result {
+                commands::doctor::DoctorExit::Ready => std::process::ExitCode::SUCCESS,
+                commands::doctor::DoctorExit::NotReady => {
+                    std::process::ExitCode::from(EXIT_RUN_NOT_PASSED)
+                }
+            })
+        }
         Command::Init { force } => {
             commands::init::run(commands::init::InitArgs {
                 repo: cli.repo,
@@ -695,6 +736,18 @@ async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
             }
             Ok(std::process::ExitCode::SUCCESS)
         }
+        Command::Store { command } => {
+            match command {
+                StoreCommand::Backup { output } => {
+                    commands::store::backup(cli.repo, output).await?
+                }
+                StoreCommand::Verify { path } => commands::store::verify(cli.repo, path).await?,
+                StoreCommand::Restore { from, force } => {
+                    commands::store::restore(cli.repo, from, force).await?
+                }
+            }
+            Ok(std::process::ExitCode::SUCCESS)
+        }
     }
 }
 
@@ -753,6 +806,7 @@ mod tests {
     fn the_documented_commands_parse() {
         for args in [
             vec!["forge", "init"],
+            vec!["forge", "doctor"],
             vec!["forge", "init", "--force"],
             vec!["forge", "agent", "list"],
             vec!["forge", "task", "validate", "task.yaml"],
@@ -773,6 +827,16 @@ mod tests {
             vec!["forge", "world", "query", "failures", "scheduler"],
             vec!["forge", "policy", "show"],
             vec!["forge", "policy", "history"],
+            vec!["forge", "store", "backup", "--output", "backup.db"],
+            vec!["forge", "store", "verify"],
+            vec![
+                "forge",
+                "store",
+                "restore",
+                "--from",
+                "backup.db",
+                "--force",
+            ],
             vec!["forge", "policy", "propose", "--max-world-facts", "8"],
             vec!["forge", "policy", "compare", "PP-0001"],
             vec!["forge", "policy", "experiment", "create", "PP-0001"],

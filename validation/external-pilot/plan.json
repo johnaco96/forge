@@ -1,0 +1,56 @@
+{
+  "plan_schema_version": 1,
+  "status": "defined_not_executed",
+  "candidate_repositories": [
+    {
+      "repository": "BurntSushi/ripgrep",
+      "ecosystem": "rust",
+      "required_commands": ["cargo test --all", "cargo clippy --all-targets -- -D warnings"]
+    },
+    {
+      "repository": "encode/httpx",
+      "ecosystem": "python",
+      "required_commands": ["scripts/test", "scripts/check"]
+    },
+    {
+      "repository": "colinhacks/zod",
+      "ecosystem": "typescript",
+      "required_commands": ["pnpm build", "pnpm vitest run"]
+    }
+  ],
+  "minimum_repositories": 2,
+  "minimum_ecosystems": 2,
+  "execution_policy": {
+    "agent_selection": "manual",
+    "router": "recommendation_only",
+    "containment": "required",
+    "merge": "human_approval",
+    "policy_auto_promotion": false,
+    "team_auto_dispatch": false,
+    "automatic_merge": false
+  },
+  "required_drills": [
+    "interrupted_agent",
+    "provider_command_failure",
+    "timeout",
+    "low_disk",
+    "memory_limit",
+    "container_unavailable",
+    "network_disabled",
+    "credential_unavailable",
+    "sqlite_backup_restore",
+    "migration_upgrade",
+    "configuration_fingerprint_drift",
+    "stale_harness_version",
+    "failed_run_cleanup"
+  ],
+  "baseline_fields_required": [
+    "full_commit_sha",
+    "task_revision_id",
+    "container_image_digest",
+    "agent_config_fingerprints",
+    "toolchain_lockfiles",
+    "evaluation_commands"
+  ]
+}
+

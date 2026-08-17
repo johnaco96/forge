@@ -366,6 +366,19 @@ pub enum EvidenceExclusionReason {
     IncompleteRun {
         status: RunStatus,
     },
+    MissingCompletionTimestamp,
+    /// The run existed at the decision cutoff, but its terminal outcome did
+    /// not. Historical replay must retain this distinction instead of using a
+    /// result that only became knowable later.
+    OutcomeAvailableAfterCutoff {
+        completed_at: DateTime<Utc>,
+    },
+    /// The run was terminal, but its independent evaluation had not completed
+    /// by the decision cutoff. The outcome is therefore not trusted evidence
+    /// for that historical decision.
+    EvaluationAvailableAfterCutoff {
+        completed_at: DateTime<Utc>,
+    },
     InfrastructureFailure,
     MissingExecution,
     MissingOutcome,
@@ -619,7 +632,8 @@ pub enum RoutingSuggestedAction {
 #[serde(tag = "decision", rename_all = "snake_case")]
 pub enum RoutingDecision {
     Selected {
-        agent: CandidateAgent,
+        /// Boxed to keep the decision enum compact; serialization is unchanged.
+        agent: Box<CandidateAgent>,
         evidence_summary: RoutingEvidenceSummary,
         snapshot: RoutingEvidenceSnapshot,
         explanation: RoutingExplanation,

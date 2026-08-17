@@ -15,8 +15,8 @@ use forge_core::integrity::{EvaluationIntegrity, IntegrityStatus};
 use forge_core::patch::PatchWarning;
 use forge_core::result::{Evaluation, EvaluatorExecutionStatus, EvaluatorKind, Verdict};
 use forge_core::run::{
-    AgentExecutionStatus, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
-    SelectionSource,
+    AgentExecutionStatus, AgentRun, ExecutionProvenance, InfrastructureFailure, PatchSummary,
+    RunOutcome, RunStatus, SelectionSource,
 };
 use forge_core::task::{EngineeringTask, TaskClassification, TaskRevisionId};
 use serde::{Deserialize, Serialize};
@@ -140,6 +140,8 @@ pub struct FailureSummary {
     pub repository: String,
     pub outcome: RunOutcome,
     pub failure_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
     pub category: Option<String>,
     pub components: Vec<String>,
     pub failed_evaluators: Vec<FailedEvaluatorSummary>,
@@ -218,6 +220,10 @@ pub struct ExportRecord {
     pub known_cost_usd: Option<f64>,
     pub patch: Option<PatchSummary>,
     pub warnings: Vec<PatchWarning>,
+    /// Typed infrastructure facts are additive so schema-version-1 exports
+    /// remain readable by newer replay tooling.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
     pub artifact_paths: Vec<PathBuf>,
     pub created_at: DateTime<Utc>,
     pub started_at: Option<DateTime<Utc>>,
@@ -492,6 +498,7 @@ impl Store {
                     StoreError::Corrupt(format!("failure run `{}` has no outcome", run.run_id))
                 })?,
                 failure_reason: run.failure_reason.clone(),
+                infrastructure_failures: run.infrastructure_failures.clone(),
                 category: profile.classification.category.clone(),
                 components: profile.components.clone(),
                 failed_evaluators,
@@ -669,6 +676,7 @@ impl Store {
                 known_cost_usd: usage.cost_usd,
                 patch: run.patch.clone(),
                 warnings: run.warnings.clone(),
+                infrastructure_failures: run.infrastructure_failures.clone(),
                 artifact_paths,
                 created_at: run.created_at,
                 started_at: run.started_at,
@@ -1334,6 +1342,7 @@ mod tests {
             },
             self_report: None,
             harness_metadata: BTreeMap::new(),
+            infrastructure_failures: Vec::new(),
         });
         run.patch = patch.map(|(files, insertions, deletions)| PatchSummary {
             base_commit: "base-commit".into(),
@@ -1417,6 +1426,7 @@ mod tests {
                 ],
                 warnings: Vec::new(),
                 execution_error: (!success).then(|| "controlled evaluator failure".into()),
+                infrastructure_failures: Vec::new(),
             }],
             at,
             at + TimeDelta::milliseconds(25),

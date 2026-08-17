@@ -7,14 +7,17 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use forge_core::events::{EventPayload, EventSink};
+use forge_core::run::InfrastructureFailure;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
 use crate::error::{ExecError, ExecResult};
-use crate::sandbox::{EnvPolicy, Redactor};
+use crate::resource::DiskWatch;
+use crate::sandbox::{EnvPolicy, ExecutionSandbox, Redactor, SandboxedInvocation};
 
 /// Cap on captured stdout/stderr per command.
 ///
@@ -42,6 +45,8 @@ pub struct ExecRequest {
     pub env: BTreeMap<String, String>,
     /// Human-readable form used in events and errors.
     pub label: String,
+    /// Emergency disk floor monitored for the lifetime of the process.
+    pub disk_watch: Option<DiskWatch>,
 }
 
 impl ExecRequest {
@@ -56,6 +61,7 @@ impl ExecRequest {
             timeout: None,
             env: BTreeMap::new(),
             label: command,
+            disk_watch: None,
         }
     }
 
@@ -79,6 +85,7 @@ impl ExecRequest {
             timeout: None,
             env: BTreeMap::new(),
             label,
+            disk_watch: None,
         }
     }
 
@@ -108,6 +115,11 @@ impl ExecRequest {
         self.label = label.into();
         self
     }
+
+    pub fn with_disk_watch(mut self, watch: DiskWatch) -> Self {
+        self.disk_watch = Some(watch);
+        self
+    }
 }
 
 /// What a command did.
@@ -122,6 +134,9 @@ pub struct ExecOutcome {
     pub timed_out: bool,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
+    /// Operational causes for controlled termination. These remain separate
+    /// from the subprocess exit and any later candidate evaluation.
+    pub infrastructure_failures: Vec<InfrastructureFailure>,
 }
 
 impl ExecOutcome {
@@ -159,6 +174,8 @@ pub struct ProcessRunner {
     policy: EnvPolicy,
     redactor: Redactor,
     max_output_bytes: usize,
+    disk_watch: Option<DiskWatch>,
+    sandbox: Option<Arc<dyn ExecutionSandbox>>,
 }
 
 impl ProcessRunner {
@@ -168,6 +185,8 @@ impl ProcessRunner {
             policy,
             redactor,
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+            disk_watch: None,
+            sandbox: None,
         }
     }
 
@@ -187,6 +206,17 @@ impl ProcessRunner {
         self
     }
 
+    /// Applies an emergency disk floor to requests which do not override it.
+    pub fn with_disk_watch(mut self, watch: DiskWatch) -> Self {
+        self.disk_watch = Some(watch);
+        self
+    }
+
+    pub fn with_sandbox(mut self, sandbox: Arc<dyn ExecutionSandbox>) -> Self {
+        self.sandbox = Some(sandbox);
+        self
+    }
+
     pub fn policy(&self) -> &EnvPolicy {
         &self.policy
     }
@@ -201,7 +231,14 @@ impl ProcessRunner {
         request: &ExecRequest,
         events: &dyn EventSink,
     ) -> ExecResult<ExecOutcome> {
-        let outcome = self.spawn_and_wait(request).await?;
+        let outcome = self.spawn_and_wait(request, events).await?;
+
+        for failure in &outcome.infrastructure_failures {
+            events.emit(EventPayload::InfrastructureFailureObserved {
+                kind: failure.kind,
+                detail: failure.detail.clone(),
+            });
+        }
 
         events.emit(EventPayload::CommandExecuted {
             command: self.redactor.redact(&outcome.label),
@@ -212,18 +249,57 @@ impl ProcessRunner {
         Ok(outcome)
     }
 
-    async fn spawn_and_wait(&self, request: &ExecRequest) -> ExecResult<ExecOutcome> {
+    async fn spawn_and_wait(
+        &self,
+        request: &ExecRequest,
+        events: &dyn EventSink,
+    ) -> ExecResult<ExecOutcome> {
         if !request.cwd.is_dir() {
             return Err(ExecError::MissingWorkingDirectory(request.cwd.clone()));
         }
 
-        let mut command = Command::new(&request.program);
+        let mut child_env = self.policy.build();
+        child_env.extend(request.env.clone());
+        let invocation = if let Some(sandbox) = &self.sandbox {
+            if let Err(error) = sandbox.preflight().await {
+                if let ExecError::Infrastructure(failure) = &error {
+                    events.emit(EventPayload::InfrastructureFailureObserved {
+                        kind: failure.kind,
+                        detail: failure.detail.clone(),
+                    });
+                }
+                return Err(error);
+            }
+            events.emit(EventPayload::SandboxPrepared {
+                boundary: "Docker-compatible OCI".into(),
+            });
+            match sandbox.wrap(request, &child_env) {
+                Ok(invocation) => invocation,
+                Err(error) => {
+                    if let ExecError::Infrastructure(failure) = &error {
+                        events.emit(EventPayload::InfrastructureFailureObserved {
+                            kind: failure.kind,
+                            detail: failure.detail.clone(),
+                        });
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            SandboxedInvocation {
+                program: request.program.clone(),
+                args: request.args.clone(),
+                cwd: request.cwd.clone(),
+                env: child_env,
+            }
+        };
+
+        let mut command = Command::new(&invocation.program);
         command
-            .args(&request.args)
-            .current_dir(&request.cwd)
+            .args(&invocation.args)
+            .current_dir(&invocation.cwd)
             .env_clear()
-            .envs(self.policy.build())
-            .envs(&request.env)
+            .envs(&invocation.env)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -241,7 +317,7 @@ impl ProcessRunner {
 
         let started = Instant::now();
         let mut child = command.spawn().map_err(|source| ExecError::Spawn {
-            program: request.program.clone(),
+            program: invocation.program.clone(),
             source,
         })?;
 
@@ -259,19 +335,52 @@ impl ProcessRunner {
             stderr_buf.clone(),
         ));
 
+        let deadline = request
+            .timeout
+            .map(|limit| tokio::time::Instant::now() + limit);
+        let disk_watch = request.disk_watch.as_ref().or(self.disk_watch.as_ref());
         let mut timed_out = false;
-        let status = match request.timeout {
-            Some(limit) => match tokio::time::timeout(limit, child.wait()).await {
-                Ok(status) => Some(status.map_err(ExecError::Wait)?),
-                Err(_elapsed) => {
+        let mut infrastructure_failures = Vec::new();
+        let status = loop {
+            let timeout_at = deadline.unwrap_or_else(|| {
+                tokio::time::Instant::now() + Duration::from_secs(365 * 24 * 60 * 60)
+            });
+            let watch_interval = disk_watch
+                .map(|watch| watch.interval)
+                .unwrap_or_else(|| Duration::from_secs(365 * 24 * 60 * 60));
+            tokio::select! {
+                status = child.wait() => break Some(status.map_err(ExecError::Wait)?),
+                _ = tokio::time::sleep_until(timeout_at), if deadline.is_some() => {
                     timed_out = true;
-                    tracing::warn!(command = %request.label, ?limit, "command timed out; killing");
+                    tracing::warn!(command = %request.label, "command timed out; killing");
                     terminate(&mut child, pid).await;
-                    None
+                    break None;
                 }
-            },
-            None => Some(child.wait().await.map_err(ExecError::Wait)?),
+                _ = tokio::time::sleep(watch_interval), if disk_watch.is_some() => {
+                    if let Some(watch) = disk_watch
+                        && let Err(ExecError::Infrastructure(failure)) = watch.check()
+                    {
+                        tracing::warn!(command = %request.label, detail = %failure.detail, "disk emergency floor reached; killing");
+                        infrastructure_failures.push(failure);
+                        terminate(&mut child, pid).await;
+                        break None;
+                    }
+                }
+            }
         };
+
+        if let Some(sandbox) = &self.sandbox {
+            match sandbox.post_run().await {
+                Ok(failures) => infrastructure_failures.extend(failures),
+                Err(ExecError::Infrastructure(failure)) => infrastructure_failures.push(failure),
+                Err(error) => return Err(error),
+            }
+            match sandbox.cleanup().await {
+                Ok(()) => events.emit(EventPayload::SandboxCleaned),
+                Err(ExecError::Infrastructure(failure)) => infrastructure_failures.push(failure),
+                Err(error) => return Err(error),
+            }
+        }
 
         let (stdout, stdout_truncated) = collect(&mut stdout_task, &stdout_buf).await;
         let (stderr, stderr_truncated) = collect(&mut stderr_task, &stderr_buf).await;
@@ -285,6 +394,7 @@ impl ProcessRunner {
             timed_out,
             stdout_truncated,
             stderr_truncated,
+            infrastructure_failures,
         })
     }
 }
@@ -406,6 +516,41 @@ mod tests {
     use super::*;
     use forge_core::events::{NullSink, RecordingSink};
     use forge_core::ids::RunId;
+    use forge_core::run::InfrastructureFailureKind;
+
+    #[derive(Debug)]
+    struct ObservableSandbox;
+
+    #[async_trait::async_trait]
+    impl ExecutionSandbox for ObservableSandbox {
+        async fn preflight(&self) -> ExecResult<()> {
+            Ok(())
+        }
+
+        fn wrap(
+            &self,
+            request: &ExecRequest,
+            child_env: &BTreeMap<String, String>,
+        ) -> ExecResult<SandboxedInvocation> {
+            Ok(SandboxedInvocation {
+                program: request.program.clone(),
+                args: request.args.clone(),
+                cwd: request.cwd.clone(),
+                env: child_env.clone(),
+            })
+        }
+
+        async fn post_run(&self) -> ExecResult<Vec<InfrastructureFailure>> {
+            Ok(vec![InfrastructureFailure::new(
+                InfrastructureFailureKind::MemoryLimitExceeded,
+                "fixture memory limit",
+            )])
+        }
+
+        async fn cleanup(&self) -> ExecResult<()> {
+            Ok(())
+        }
+    }
 
     fn runner() -> ProcessRunner {
         ProcessRunner::conservative()
@@ -469,6 +614,49 @@ mod tests {
         assert!(matches!(
             &events[0].payload,
             EventPayload::CommandExecuted { exit_code: 2, .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn sandbox_lifecycle_and_resource_failure_are_recorded_in_order() {
+        let sink = RecordingSink::new(RunId::sequential(2));
+        let outcome = runner()
+            .with_sandbox(Arc::new(ObservableSandbox))
+            .run(&ExecRequest::shell("true", cwd()), &sink)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            outcome.infrastructure_failures.as_slice(),
+            [InfrastructureFailure {
+                kind: InfrastructureFailureKind::MemoryLimitExceeded,
+                ..
+            }]
+        ));
+        let events = sink.events();
+        assert!(matches!(
+            events.as_slice(),
+            [
+                forge_core::events::Event {
+                    payload: EventPayload::SandboxPrepared { .. },
+                    ..
+                },
+                forge_core::events::Event {
+                    payload: EventPayload::SandboxCleaned,
+                    ..
+                },
+                forge_core::events::Event {
+                    payload: EventPayload::InfrastructureFailureObserved {
+                        kind: InfrastructureFailureKind::MemoryLimitExceeded,
+                        ..
+                    },
+                    ..
+                },
+                forge_core::events::Event {
+                    payload: EventPayload::CommandExecuted { exit_code: 0, .. },
+                    ..
+                },
+            ]
         ));
     }
 
@@ -622,7 +810,32 @@ mod tests {
             timed_out: false,
             stdout_truncated: false,
             stderr_truncated: false,
+            infrastructure_failures: Vec::new(),
         };
         assert_eq!(outcome.tail(2), "line 9\nline 10");
+    }
+
+    #[tokio::test]
+    async fn disk_watchdog_terminates_before_enospc_and_classifies_the_cause() {
+        let outcome = runner()
+            .run(
+                &ExecRequest::shell("sleep 30", cwd()).with_disk_watch(DiskWatch::new(
+                    [cwd()],
+                    u64::MAX,
+                    Duration::from_millis(5),
+                )),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome.exit_code, None);
+        assert!(!outcome.timed_out);
+        assert!(matches!(
+            outcome.infrastructure_failures.as_slice(),
+            [InfrastructureFailure {
+                kind: forge_core::run::InfrastructureFailureKind::DiskExhausted,
+                ..
+            }]
+        ));
     }
 }

@@ -9,6 +9,7 @@
 //! comes from `forge-eval`, on the other side of the trust boundary.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use forge_core::security::AgentSecurity;
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
 use forge_core::world::WorldModelContext;
+use forge_executor::{DiskWatch, ExecutionSandbox};
 
 use crate::error::AgentResult;
 
@@ -41,6 +43,8 @@ pub struct RunContext<'a> {
     pub timeout: Option<Duration>,
     /// Directory for captured output and harness-native trajectory files.
     pub artifacts_dir: PathBuf,
+    pub disk_watch: Option<DiskWatch>,
+    pub sandbox: Option<Arc<dyn ExecutionSandbox>>,
 }
 
 impl<'a> RunContext<'a> {
@@ -61,6 +65,8 @@ impl<'a> RunContext<'a> {
             events,
             timeout: config.timeout_secs.map(Duration::from_secs),
             artifacts_dir,
+            disk_watch: None,
+            sandbox: None,
         }
     }
 
@@ -71,6 +77,16 @@ impl<'a> RunContext<'a> {
 
     pub fn with_world_model(mut self, world_model: Option<&'a WorldModelContext>) -> Self {
         self.world_model = world_model;
+        self
+    }
+
+    pub fn with_disk_watch(mut self, disk_watch: DiskWatch) -> Self {
+        self.disk_watch = Some(disk_watch);
+        self
+    }
+
+    pub fn with_sandbox(mut self, sandbox: Option<Arc<dyn ExecutionSandbox>>) -> Self {
+        self.sandbox = sandbox;
         self
     }
 }

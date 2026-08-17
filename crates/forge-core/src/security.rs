@@ -1,9 +1,9 @@
 //! What Forge is and is not protecting you from.
 //!
-//! Forge isolates an agent's *changes* from your working tree. It does not
-//! contain the agent's *process*. Those are different guarantees, and the gap
-//! between them is easy to misread in Forge's favour — a run that reports
-//! "workspace: isolated" invites the conclusion that the thing is sandboxed.
+//! Forge always isolates an agent's *changes* from the primary working tree.
+//! Required mode also contains the agent/evaluator *process* in a
+//! Docker-compatible OCI boundary; explicit development mode does not. Those
+//! are different guarantees, and reports keep them separate.
 //!
 //! So the posture is modeled, recorded, and printed rather than left implicit.
 //! When a run has no containment and an unrestricted agent, Forge says so every
@@ -11,6 +11,78 @@
 //! someone believes otherwise.
 
 use serde::{Deserialize, Serialize};
+
+/// Network access granted to a production container.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NetworkPolicy {
+    #[default]
+    None,
+    /// A pre-created operator-managed Docker network with external filtering.
+    Restricted,
+    /// Docker's ordinary bridge network. Explicitly not egress-restricted.
+    Allowed,
+}
+
+impl NetworkPolicy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Restricted => "restricted",
+            Self::Allowed => "allowed",
+        }
+    }
+}
+
+/// Explicit execution boundary. Host mode exists for development; container
+/// mode is fail-closed and never falls back to host execution.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ExecutionSandboxConfig {
+    #[serde(rename = "none", alias = "host")]
+    #[default]
+    None,
+    #[serde(rename = "required", alias = "container")]
+    Required {
+        #[serde(default = "default_container_runtime")]
+        runtime: String,
+        image: String,
+        #[serde(default)]
+        network: NetworkPolicy,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        restricted_network: Option<String>,
+        #[serde(default = "default_cpu_millis")]
+        cpu_millis: u32,
+        #[serde(default = "default_memory_bytes")]
+        memory_bytes: u64,
+        #[serde(default = "default_pids_limit")]
+        pids_limit: u32,
+        #[serde(default = "default_workspace_limit_bytes")]
+        workspace_limit_bytes: u64,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        credential_env: Vec<String>,
+    },
+}
+
+fn default_container_runtime() -> String {
+    "docker".into()
+}
+
+const fn default_cpu_millis() -> u32 {
+    2_000
+}
+
+const fn default_memory_bytes() -> u64 {
+    4 * 1024 * 1024 * 1024
+}
+
+const fn default_pids_limit() -> u32 {
+    256
+}
+
+const fn default_workspace_limit_bytes() -> u64 {
+    20 * 1024 * 1024 * 1024
+}
 
 /// How an agent's file changes are kept away from the user's work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -38,7 +110,7 @@ pub enum HostContainment {
     /// The agent runs as the invoking user with that user's access to the
     /// machine and the network.
     None,
-    /// Reserved for container isolation, which does not exist yet.
+    /// A fail-closed Docker-compatible OCI execution boundary.
     Container,
 }
 
@@ -46,7 +118,7 @@ impl HostContainment {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
-            Self::Container => "container",
+            Self::Container => "Docker-compatible OCI",
         }
     }
 }
@@ -86,15 +158,58 @@ pub struct SecurityPosture {
     pub host_containment: HostContainment,
     #[serde(default)]
     pub agent: AgentSecurity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_policy: Option<NetworkPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_millis: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_limit_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pids_limit: Option<u32>,
+    #[serde(default)]
+    pub credential_env: Vec<String>,
 }
 
 impl SecurityPosture {
-    /// What Forge can offer today: an isolated worktree and nothing more.
+    /// Explicit development mode: an isolated worktree and no process boundary.
     pub fn current(agent: AgentSecurity) -> Self {
         Self {
             workspace_isolation: WorkspaceIsolation::Worktree,
             host_containment: HostContainment::None,
             agent,
+            network_policy: None,
+            cpu_millis: None,
+            memory_bytes: None,
+            workspace_limit_bytes: None,
+            pids_limit: None,
+            credential_env: Vec::new(),
+        }
+    }
+
+    pub fn for_sandbox(agent: AgentSecurity, sandbox: &ExecutionSandboxConfig) -> Self {
+        match sandbox {
+            ExecutionSandboxConfig::None => Self::current(agent),
+            ExecutionSandboxConfig::Required {
+                network,
+                cpu_millis,
+                memory_bytes,
+                pids_limit,
+                workspace_limit_bytes,
+                credential_env,
+                ..
+            } => Self {
+                workspace_isolation: WorkspaceIsolation::Worktree,
+                host_containment: HostContainment::Container,
+                agent,
+                network_policy: Some(*network),
+                cpu_millis: Some(*cpu_millis),
+                memory_bytes: Some(*memory_bytes),
+                workspace_limit_bytes: Some(*workspace_limit_bytes),
+                pids_limit: Some(*pids_limit),
+                credential_env: credential_env.clone(),
+            },
         }
     }
 
@@ -126,7 +241,7 @@ impl SecurityPosture {
 
     /// Label/value rows for the run report.
     pub fn rows(&self) -> Vec<(&'static str, String)> {
-        vec![
+        let mut rows = vec![
             (
                 "Workspace isolation",
                 self.workspace_isolation.as_str().to_string(),
@@ -142,7 +257,36 @@ impl SecurityPosture {
                     .clone()
                     .unwrap_or_else(|| "unknown".to_string()),
             ),
-        ]
+        ];
+        if let Some(network) = self.network_policy {
+            rows.push(("Network policy", network.as_str().to_string()));
+        }
+        if let Some(cpu_millis) = self.cpu_millis {
+            rows.push((
+                "CPU limit",
+                format!("{:.3} CPUs", cpu_millis as f64 / 1000.0),
+            ));
+        }
+        if let Some(memory_bytes) = self.memory_bytes {
+            rows.push(("Memory limit", format!("{memory_bytes} bytes")));
+        }
+        if let Some(workspace_limit_bytes) = self.workspace_limit_bytes {
+            rows.push(("Workspace limit", format!("{workspace_limit_bytes} bytes")));
+        }
+        if let Some(pids_limit) = self.pids_limit {
+            rows.push(("Process limit", pids_limit.to_string()));
+        }
+        if self.host_containment == HostContainment::Container {
+            rows.push((
+                "Credential policy",
+                if self.credential_env.is_empty() {
+                    "none injected".into()
+                } else {
+                    format!("job-scoped allowlist: {}", self.credential_env.join(","))
+                },
+            ));
+        }
+        rows
     }
 }
 

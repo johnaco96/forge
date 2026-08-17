@@ -196,6 +196,7 @@ fn check(name: &str, kind: EvaluatorKind, metrics: Vec<Metric>, duration_ms: u64
         metrics,
         warnings: Vec::new(),
         execution_error: None,
+        infrastructure_failures: Vec::new(),
     }
 }
 

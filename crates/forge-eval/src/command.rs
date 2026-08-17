@@ -16,7 +16,7 @@ use forge_core::result::{
 use forge_core::task::CommandSpec;
 use forge_executor::ExecRequest;
 
-use crate::error::{EvalError, EvalResult};
+use crate::error::EvalResult;
 use crate::evaluator::{EvalContext, Evaluator};
 
 /// Lines of failing output kept as the check's explanation.
@@ -82,14 +82,7 @@ impl Evaluator for CommandEvaluator {
                     .or(ctx.default_timeout),
             );
 
-        let outcome = ctx
-            .runner
-            .run(&request, ctx.events)
-            .await
-            .map_err(|source| EvalError::NotMeasurable {
-                check: self.name.clone(),
-                reason: source.to_string(),
-            })?;
+        let outcome = ctx.runner.run(&request, ctx.events).await?;
 
         // A timeout is a failure of the change, not of the measurement: a suite
         // that cannot finish inside its budget has not passed. An evaluator
@@ -148,6 +141,7 @@ impl Evaluator for CommandEvaluator {
             ],
             warnings,
             execution_error: None,
+            infrastructure_failures: outcome.infrastructure_failures,
         })
     }
 }
@@ -307,6 +301,12 @@ mod tests {
             .evaluate(&ctx)
             .await
             .unwrap_err();
-        assert!(matches!(err, EvalError::NotMeasurable { .. }), "{err}");
+        assert!(
+            matches!(
+                err,
+                crate::EvalError::Exec(forge_executor::ExecError::MissingWorkingDirectory(_))
+            ),
+            "{err}"
+        );
     }
 }

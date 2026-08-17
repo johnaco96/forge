@@ -35,6 +35,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use forge_agent::adapter::{AgentAdapter, RunContext};
@@ -50,7 +51,7 @@ use forge_core::optimization::{
     PolicyDecision, PolicyEvent, PolicyEventPayload, PolicyEventSubject, ShadowDecision,
 };
 use forge_core::patch::{PatchPolicy, PatchWarning};
-use forge_core::policy::{ExecutionStrategy, PolicyBounds};
+use forge_core::policy::{EngineeringPolicy, ExecutionStrategy, PolicyBounds};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{
     AgentExecution, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
@@ -62,7 +63,9 @@ use forge_core::workspace::Workspace;
 use forge_core::world::WorldModelContext;
 use forge_eval::{EvalContext, EvaluationEngine, EvaluationPlan};
 use forge_executor::{
-    EnvPolicy, ProcessRunner, WorkspaceProvider, WorktreeProvider, capture_candidate_patch,
+    DiskPreflightPolicy, DiskWatch, DockerSandbox, EnvPolicy, ExecutionSandbox, ProcessRunner,
+    WorkspaceProvider, WorktreeProvider, capture_candidate_patch, preflight_disk,
+    preflight_sandbox_config,
 };
 use forge_git::Repository;
 use forge_policy::{ensure_bootstrap_policy, resolve_execution_policy};
@@ -254,6 +257,20 @@ impl Runner {
         self.agent_config_with_timeout_cap(request, None)
     }
 
+    /// Builds the exact execution identity used by routing and by the
+    /// subsequent run. Keeping this in the runner prevents callers from
+    /// inventing a parallel policy/configuration model.
+    pub fn agent_config_for_policy(
+        &self,
+        request: &RunRequest,
+        policy: &EngineeringPolicy,
+    ) -> RunnerResult<AgentConfig> {
+        let mut config =
+            self.agent_config_with_timeout_cap(request, Some(policy.resources.timeout_secs))?;
+        config.execution_policy_fingerprint = Some(policy.execution_fingerprint());
+        Ok(config)
+    }
+
     fn agent_config_with_timeout_cap(
         &self,
         request: &RunRequest,
@@ -265,6 +282,8 @@ impl Runner {
 
         let mut config = AgentConfig::new(agent_id, harness_for(&request.agent_id));
         config.model = settings.model.clone();
+        config.harness_version = settings.harness_version.clone();
+        config.sandbox = self.config.containment.clone();
         let requested = request
             .timeout
             .map(|timeout| timeout.as_secs())
@@ -285,6 +304,23 @@ impl Runner {
                 .settings
                 .insert("extra_args".to_string(), settings.extra_args.join(" "));
         }
+        config.settings.insert(
+            "forge.world_model_configuration".into(),
+            format!(
+                "enabled={},structure={},task_metadata={},history={}",
+                self.config.world_model.enabled,
+                self.config.world_model.structure,
+                self.config.world_model.task_metadata,
+                self.config.world_model.history,
+            ),
+        );
+        // Evaluation commands differ per immutable task revision, so their
+        // exact content belongs to that revision. This key fingerprints the
+        // shared resolution/trust protocol which makes PASS comparable.
+        config.settings.insert(
+            "forge.evaluation_protocol".into(),
+            "task-revision-evaluation-v1".into(),
+        );
         Ok(config)
     }
 
@@ -481,10 +517,7 @@ impl Runner {
             ));
         }
 
-        let agent_config = self.agent_config_with_timeout_cap(
-            &request,
-            Some(policy.selected.resources.timeout_secs),
-        )?;
+        let agent_config = self.agent_config_for_policy(&request, &policy.selected)?;
         // Resolve trusted evaluation configuration before any candidate code
         // executes. The resulting plan is never rebuilt from the workspace.
         let evaluation_plan = EvaluationPlan::resolve(&request.task);
@@ -590,7 +623,10 @@ impl Runner {
         run.execution_provenance = request.execution_provenance;
         run.selection_source = request.selection_source.clone();
         run.world_model_context = world_model.as_ref().map(Into::into);
-        run.security = Some(SecurityPosture::current(adapter.security()));
+        run.security = Some(SecurityPosture::for_sandbox(
+            adapter.security(),
+            &run.agent.sandbox,
+        ));
         let artifacts_dir = self.layout.run_dir(&run_id);
         run.artifacts.directory = Some(artifacts_dir.clone());
 
@@ -652,6 +688,9 @@ impl Runner {
             Ok(outcome) => outcome,
             Err(err) => {
                 // A failure after the run exists is recorded, not thrown away.
+                if let Some(failure) = infrastructure_failure(&err) {
+                    run.infrastructure_failures.push(failure.clone());
+                }
                 let reason = describe_failure(&err);
                 tracing::warn!(run = %run_id, %reason, "run failed");
                 sink.emit(EventPayload::RunFailed {
@@ -664,11 +703,24 @@ impl Runner {
                 self.persist(&run, None, &sink, experiment_id).await?;
                 self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
                     .await?;
-                // The workspace is deliberately never torn down on this path —
-                // a failed run's workspace is the most useful thing to look at.
-                // Reporting it as absent would tell the operator their evidence
-                // was discarded while it is still sitting on disk.
-                return Ok(self.report(run, None, None, true, base_was_dirty, &sink));
+                let failed_workspace = workspace_from_run(&run);
+                let should_keep = failed_workspace.is_some()
+                    && (keep_workspace || self.config.workspaces.keep_on_failure);
+                if let Some(workspace) = &failed_workspace
+                    && !should_keep
+                    && let Ok(provider) = self.provider(false)
+                    && let Err(cleanup) = provider.teardown(workspace)
+                {
+                    tracing::warn!(%cleanup, "could not remove failed workspace");
+                }
+                return Ok(self.report(
+                    run,
+                    None,
+                    should_keep.then_some(failed_workspace).flatten(),
+                    should_keep,
+                    base_was_dirty,
+                    &sink,
+                ));
             }
         };
 
@@ -712,6 +764,21 @@ impl Runner {
         run: &mut AgentRun,
         inputs: &PipelineInputs<'_>,
     ) -> RunnerResult<(Option<Evaluation>, Option<Workspace>)> {
+        // Capacity is checked after the durable run stub exists, but before a
+        // workspace or subprocess is created, so refusal is both early and
+        // persisted on the run's failure path.
+        preflight_disk(
+            [
+                self.layout.worktrees_root(&self.config),
+                self.layout.store_path(&self.config),
+            ],
+            DiskPreflightPolicy {
+                minimum_free_bytes: self.config.resources.minimum_free_bytes,
+                minimum_free_percent: self.config.resources.minimum_free_percent,
+            },
+        )?;
+        preflight_sandbox_config(&self.config.containment).await?;
+
         // 1. Isolated workspace.
         run.transition_to(RunStatus::Preparing)?;
         let provider = self.provider(true)?;
@@ -719,6 +786,8 @@ impl Runner {
         run.workspace_path = Some(workspace.path.clone());
         run.branch = Some(workspace.branch.clone());
         self.store.save_run(run, inputs.experiment_id).await?;
+
+        let sandbox = self.execution_sandbox(&workspace, run.run_id.as_str())?;
 
         // 2. The agent. Untrusted from here until the patch is read back.
         run.transition_to(RunStatus::Running)?;
@@ -736,10 +805,20 @@ impl Runner {
             inputs.artifacts_dir.to_path_buf(),
         )
         .with_world_model(inputs.world_model)
-        .with_timeout(timeout);
+        .with_timeout(timeout)
+        .with_disk_watch(self.disk_watch(&workspace))
+        .with_sandbox(sandbox.clone());
 
         match inputs.adapter.execute(&ctx).await {
-            Ok(execution) => run.execution = Some(execution),
+            Ok(mut execution) => {
+                run.infrastructure_failures
+                    .extend(execution.infrastructure_failures.iter().cloned());
+                if !self.config.artifacts.retain_agent_streams {
+                    remove_optional_stream(&mut execution.stdout_path);
+                    remove_optional_stream(&mut execution.stderr_path);
+                }
+                run.execution = Some(execution);
+            }
             Err(err) => {
                 // The agent could not be run. Record it and stop; there is
                 // nothing to evaluate.
@@ -766,15 +845,16 @@ impl Runner {
         self.store.save_run(run, inputs.experiment_id).await?;
 
         let evaluation = self
-            .evaluate(
-                &request.task,
-                inputs.evaluation_plan,
-                &workspace,
-                run,
-                inputs.artifacts_dir,
-                inputs.sink,
-            )
+            .evaluate(&request.task, inputs, &workspace, run, sandbox)
             .await;
+        if let Some(evaluation) = &evaluation {
+            run.infrastructure_failures.extend(
+                evaluation
+                    .checks
+                    .iter()
+                    .flat_map(|check| check.infrastructure_failures.iter().cloned()),
+            );
+        }
         run.evaluation_verdict = evaluation.as_ref().map(|e| e.verdict);
 
         // 5. Conclude.
@@ -830,29 +910,61 @@ impl Runner {
     async fn evaluate(
         &self,
         task: &EngineeringTask,
-        evaluation_plan: &EvaluationPlan,
+        inputs: &PipelineInputs<'_>,
         workspace: &Workspace,
         run: &AgentRun,
-        artifacts_dir: &Path,
-        sink: &RecordingSink,
+        sandbox: Option<Arc<dyn ExecutionSandbox>>,
     ) -> Option<Evaluation> {
-        if evaluation_plan.is_empty() {
+        if inputs.evaluation_plan.is_empty() {
             return None;
         }
 
         // Evaluation commands get the conservative environment: they run code
         // an agent just wrote, and have no business seeing credentials.
-        let runner = ProcessRunner::new(EnvPolicy::conservative());
-        let ctx = EvalContext::new(workspace, task, &runner, sink)
+        let mut runner = ProcessRunner::new(EnvPolicy::conservative())
+            .with_disk_watch(self.disk_watch(workspace));
+        if let Some(sandbox) = sandbox {
+            runner = runner.with_sandbox(sandbox);
+        }
+        let ctx = EvalContext::new(workspace, task, &runner, inputs.sink)
             .with_patch(
                 run.patch
                     .as_ref()
                     .expect("patch captured before evaluation"),
             )
             .with_default_timeout(Some(Duration::from_secs(self.config.defaults.timeout_secs)))
-            .with_artifacts_dir(artifacts_dir);
+            .with_artifacts_dir(inputs.artifacts_dir);
 
-        Some(EvaluationEngine::execute(evaluation_plan, run.run_id.clone(), &ctx).await)
+        Some(EvaluationEngine::execute(inputs.evaluation_plan, run.run_id.clone(), &ctx).await)
+    }
+
+    fn disk_watch(&self, workspace: &Workspace) -> DiskWatch {
+        let watch = DiskWatch::new(
+            [workspace.path.clone(), self.layout.store_path(&self.config)],
+            self.config.resources.emergency_free_bytes,
+            Duration::from_secs(self.config.resources.disk_watch_interval_secs),
+        );
+        match &self.config.containment {
+            forge_core::security::ExecutionSandboxConfig::Required {
+                workspace_limit_bytes,
+                ..
+            } => watch.with_workspace_limit(&workspace.path, *workspace_limit_bytes),
+            forge_core::security::ExecutionSandboxConfig::None => watch,
+        }
+    }
+
+    fn execution_sandbox(
+        &self,
+        workspace: &Workspace,
+        run_label: &str,
+    ) -> RunnerResult<Option<Arc<dyn ExecutionSandbox>>> {
+        let git_common_dir = self.repository.git_common_dir()?;
+        Ok(DockerSandbox::from_config(
+            &self.config.containment,
+            &git_common_dir,
+            &workspace.path,
+            run_label,
+        )?)
     }
 
     fn provider(&self, keep: bool) -> RunnerResult<WorktreeProvider> {
@@ -957,6 +1069,38 @@ fn describe_failure(error: &dyn std::error::Error) -> String {
         next = cause.source();
     }
     message
+}
+
+fn infrastructure_failure(error: &RunnerError) -> Option<&forge_core::run::InfrastructureFailure> {
+    match error {
+        RunnerError::Exec(forge_executor::ExecError::Infrastructure(failure))
+        | RunnerError::Agent(forge_agent::error::AgentError::Exec(
+            forge_executor::ExecError::Infrastructure(failure),
+        )) => Some(failure),
+        _ => None,
+    }
+}
+
+fn workspace_from_run(run: &AgentRun) -> Option<Workspace> {
+    Some(Workspace::new(
+        run.run_id.clone(),
+        forge_core::workspace::WorkspaceKind::Worktree,
+        run.workspace_path.clone()?,
+        run.branch.clone()?,
+        run.base_commit.clone(),
+    ))
+}
+
+fn remove_optional_stream(path: &mut Option<PathBuf>) {
+    let Some(stream) = path.take() else {
+        return;
+    };
+    if let Err(error) = std::fs::remove_file(&stream)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(path = %stream.display(), %error, "could not apply agent-stream retention policy");
+        *path = Some(stream);
+    }
 }
 
 /// The harness an agent id runs under.
@@ -1066,5 +1210,17 @@ mod tests {
             source: std::io::Error::other("inner detail"),
         });
         assert_eq!(described, "outer: inner detail");
+    }
+
+    #[test]
+    fn typed_infrastructure_survives_agent_and_runner_wrappers() {
+        let expected = forge_core::run::InfrastructureFailure::new(
+            forge_core::run::InfrastructureFailureKind::SandboxUnavailable,
+            "runtime stopped",
+        );
+        let error = RunnerError::Agent(forge_agent::error::AgentError::Exec(
+            forge_executor::ExecError::Infrastructure(expected.clone()),
+        ));
+        assert_eq!(infrastructure_failure(&error), Some(&expected));
     }
 }

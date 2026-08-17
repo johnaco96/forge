@@ -193,6 +193,99 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically persists a routing decision and its lifecycle events.
+    ///
+    /// A decision without its evidence-resolved/decision-made events is an
+    /// incomplete provenance record, so production routing uses this method
+    /// instead of two independently committed writes.
+    pub async fn save_routing_decision_with_events(
+        &self,
+        record: &RoutingDecisionRecord,
+        events: &[RoutingEvent],
+    ) -> StoreResult<()> {
+        let (kind, eligible) = match &record.decision {
+            RoutingDecision::Selected {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::Selected,
+                evidence_summary.eligible_runs,
+            ),
+            RoutingDecision::InsufficientEvidence {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::InsufficientEvidence,
+                evidence_summary.eligible_runs,
+            ),
+            RoutingDecision::CompeteRecommended {
+                evidence_summary, ..
+            } => (
+                RoutingDecisionKind::CompeteRecommended,
+                evidence_summary.eligible_runs,
+            ),
+        };
+        let mut transaction = self.pool.begin().await?;
+        sqlx::query(
+            "INSERT INTO routing_decisions (
+                 decision_id, run_id, task_id, task_revision_id, created_at, decision_kind,
+                 selected_agent_id, selected_config_fingerprint, router_version,
+                 evidence_policy_version, historical_cutoff, evidence_fingerprint,
+                 eligible_evidence_count, record_json, world_model_snapshot_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+             ON CONFLICT (decision_id) DO UPDATE SET
+                 run_id = COALESCE(routing_decisions.run_id, excluded.run_id),
+                 record_json = excluded.record_json",
+        )
+        .bind(record.decision_id.as_str())
+        .bind(record.run_id.as_ref().map(RunId::as_str))
+        .bind(record.task_id.as_str())
+        .bind(record.task_revision_id.as_str())
+        .bind(record.created_at.to_rfc3339())
+        .bind(routing_decision_kind(kind))
+        .bind(
+            record
+                .selected
+                .as_ref()
+                .map(|agent| agent.agent_id.as_str()),
+        )
+        .bind(
+            record
+                .selected
+                .as_ref()
+                .map(|agent| agent.config_fingerprint.as_str()),
+        )
+        .bind(&record.router_version)
+        .bind(&record.evidence_policy_version.0)
+        .bind(record.historical_cutoff.to_rfc3339())
+        .bind(&record.evidence_fingerprint)
+        .bind(eligible as i64)
+        .bind(serde_json::to_string(record)?)
+        .bind(
+            record
+                .world_model_snapshot_id
+                .as_ref()
+                .map(|snapshot_id| snapshot_id.as_str()),
+        )
+        .execute(&mut *transaction)
+        .await?;
+        for event in events {
+            sqlx::query(
+                "INSERT INTO routing_decision_events (
+                    decision_id, seq, timestamp, event_type, data_json
+                 ) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT (decision_id, seq) DO NOTHING",
+            )
+            .bind(event.decision_id.as_str())
+            .bind(event.seq as i64)
+            .bind(event.timestamp.to_rfc3339())
+            .bind(routing_event_type(&event.payload))
+            .bind(serde_json::to_string(event)?)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub async fn link_routing_decision_run(
         &self,
         decision_id: &RoutingDecisionId,
@@ -1303,6 +1396,7 @@ mod tests {
             },
             self_report: Some("I fixed everything".to_string()),
             harness_metadata: Default::default(),
+            infrastructure_failures: Vec::new(),
         });
         run.patch = Some(PatchSummary {
             base_commit: "a73cf21".into(),
@@ -1490,6 +1584,7 @@ mod tests {
                 ],
                 warnings: Vec::new(),
                 execution_error: None,
+                infrastructure_failures: Vec::new(),
             }],
             now,
             now,
@@ -1565,6 +1660,7 @@ mod tests {
             )],
             warnings: Vec::new(),
             execution_error: None,
+            infrastructure_failures: Vec::new(),
         };
 
         store
@@ -1638,6 +1734,7 @@ mod tests {
                     metrics: vec![],
                     warnings: Vec::new(),
                     execution_error: None,
+                    infrastructure_failures: Vec::new(),
                 }],
                 now,
                 now,

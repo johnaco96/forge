@@ -152,8 +152,9 @@ worktrees have become hardened against a hostile participant.
 
 ## Rules that are not negotiable
 
-- **No fabricated results.** Codex is unavailable; no Codex measurement exists
-  anywhere in this repository.
+- **No fabricated results.** Codex was unavailable at preregistration. Tier 1
+  later recorded real paired Codex/Claude executions; nothing synthetic was
+  substituted for them.
 - **No synthetic evidence in empirical claims.** `execution_provenance` already
   separates them, and the analysis honours it.
 - **Raw evidence is primary.** Every statistic is recomputable from
@@ -167,20 +168,17 @@ worktrees have become hardened against a hostile participant.
 
 ## Status
 
-Claude-only dogfooding has run and is complete; it exercised the control plane
-and surfaced five real Forge defects, all fixed. The three tasks Claude
-attempted were retired from the corpus and replaced, so no formal task carries
-prior exposure for either agent.
+Claude-only dogfooding completed first and surfaced five real Forge defects.
+The formal Tier 1 campaign subsequently completed 20 paired tasks and 40 live
+agent runs from its frozen validation baseline. Its immutable derived artifacts
+are in validation/analysis/tier1. The router made zero selections at the frozen
+0.05 threshold; routing-validation.md explains the exact Rust replay and why
+that is a legitimate empirical result rather than a campaign failure.
 
-The paired Claude/Codex campaign has **not** been executed, and no part of this
-repository claims otherwise. It is fail-closed on three independent conditions —
-Codex's CLI is absent, the campaign baseline is not yet frozen, and candidate
-branches from dogfooding are still present — and `run-campaign.sh --dry-run`
-reports each of them.
-
-The baseline will be a small validation-hardening release rather than `v1.0.0`:
-that commit could not capture a patch from any agent that compiled the project,
-so a campaign run from it would have produced twenty infrastructure errors.
+The original manifest and dry-run blockers remain historical preregistration
+evidence. They should not be edited to make the before-state resemble the later
+outcome. The separate prospective routing holdout is preregistered but has not
+been executed.
 
 See [`validation/results/`](../validation/results/README.md) for what has
 actually run and where the raw evidence lives.

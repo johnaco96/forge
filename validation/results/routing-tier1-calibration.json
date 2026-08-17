@@ -1,0 +1,26 @@
+{
+  "artifact_schema_version": 1,
+  "status": "offline_retrospective_calibration_only",
+  "router_implementation": "real Rust forge-store/forge-router path",
+  "router_version": "historical-baseline-v1",
+  "source_export": ".forge/validation-archive/tier1-master.jsonl",
+  "source_export_sha256": "b283ef15c92f3c4c54f104900234638c2c46b2919a2f13a14f7435f3b27903b9",
+  "tier1_analysis_sha256": "2d86f6b92130e4e9d48faa62a40b25b02fb1f1cf7e1387e123496d96599c83fd",
+  "task_count": 20,
+  "post_readiness_task_count": 14,
+  "objective": "trustworthy_pass_probability",
+  "rows": [
+    {"threshold": 0.05, "selections": 0, "coverage": 0.0, "selected_pass_rate": null, "decision_accuracy": null, "regret_count": 0},
+    {"threshold": 0.03, "selections": 0, "coverage": 0.0, "selected_pass_rate": null, "decision_accuracy": null, "regret_count": 0},
+    {"threshold": 0.02, "selections": 2, "coverage": 0.10, "selected_pass_rate": 1.0, "decision_accuracy": 1.0, "accuracy_denominator": 1, "regret_count": 0},
+    {"threshold": 0.01, "selections": 3, "coverage": 0.15, "selected_pass_rate": 0.6666666666666666, "decision_accuracy": 0.5, "accuracy_denominator": 2, "regret_count": 1},
+    {"threshold": 0.0, "selections": 14, "coverage": 0.70, "selected_pass_rate": 0.7857142857142857, "decision_accuracy": 0.42857142857142855, "accuracy_denominator": 7, "regret_count": 1}
+  ],
+  "notes": [
+    "Accuracy excludes paired ties and tasks without a decisive campaign winner.",
+    "Campaign winners may use secondary benchmark/runtime rules; the production router intentionally optimizes PASS probability only.",
+    "No production threshold was changed from 0.05.",
+    "These retrospective rows are not prospective performance evidence."
+  ]
+}
+

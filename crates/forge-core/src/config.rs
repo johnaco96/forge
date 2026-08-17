@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::ids::RunId;
 use crate::routing::{ExplorationPolicy, MinimumRoutingEvidence};
 use crate::run::ExecutionProvenance;
+use crate::security::ExecutionSandboxConfig;
 
 /// Directory Forge owns inside a repository.
 pub const FORGE_DIR: &str = ".forge";
@@ -64,6 +65,11 @@ pub struct WorkspacesConfig {
     /// run; wasteful as a default.
     #[serde(default)]
     pub keep_after_run: bool,
+    /// Preserve failed workspaces for diagnosis. Production operators may
+    /// disable this when quotas require automatic cleanup; durable ledger,
+    /// patch, evaluation, and report evidence is unaffected.
+    #[serde(default = "default_true")]
+    pub keep_on_failure: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +77,71 @@ pub struct WorkspacesConfig {
 pub struct StoreConfig {
     /// SQLite database path, relative to the repository root.
     pub path: String,
+}
+
+/// Retention policy for non-canonical provider streams. Ledger records,
+/// patches, evaluator logs, and decision provenance are never affected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArtifactRetentionConfig {
+    /// Keep provider stdout/stderr after normalized execution facts have been
+    /// persisted. Disable only when raw streams are prohibited or separately
+    /// archived.
+    #[serde(default = "default_true")]
+    pub retain_agent_streams: bool,
+}
+
+impl Default for ArtifactRetentionConfig {
+    fn default() -> Self {
+        Self {
+            retain_agent_streams: true,
+        }
+    }
+}
+
+/// Host-capacity floors applied before and during expensive executions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceConfig {
+    /// Absolute free-space floor required on workspace and store volumes.
+    #[serde(default = "default_minimum_free_bytes")]
+    pub minimum_free_bytes: u64,
+    /// Percentage free-space floor required alongside the absolute floor.
+    #[serde(default = "default_minimum_free_percent")]
+    pub minimum_free_percent: f64,
+    /// Emergency absolute floor monitored while agent/evaluator processes run.
+    #[serde(default = "default_emergency_free_bytes")]
+    pub emergency_free_bytes: u64,
+    /// Polling interval for the active disk watchdog.
+    #[serde(default = "default_disk_watch_interval_secs")]
+    pub disk_watch_interval_secs: u64,
+}
+
+const fn default_minimum_free_bytes() -> u64 {
+    1024 * 1024 * 1024
+}
+
+const fn default_emergency_free_bytes() -> u64 {
+    512 * 1024 * 1024
+}
+
+const fn default_disk_watch_interval_secs() -> u64 {
+    5
+}
+
+const fn default_minimum_free_percent() -> f64 {
+    5.0
+}
+
+impl Default for ResourceConfig {
+    fn default() -> Self {
+        Self {
+            minimum_free_bytes: default_minimum_free_bytes(),
+            minimum_free_percent: default_minimum_free_percent(),
+            emergency_free_bytes: default_emergency_free_bytes(),
+            disk_watch_interval_secs: default_disk_watch_interval_secs(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -206,7 +277,7 @@ impl RoutingConfig {
 
 /// Per-agent configuration, keyed by agent id under `[agents.<id>]`.
 ///
-/// `executable`, `model`, `timeout_secs`, `extra_args`, and
+/// `executable`, `model`, `harness_version`, `timeout_secs`, `extra_args`, and
 /// `execution_provenance` have meaning to Forge. Everything else is collected
 /// into [`Self::settings`] and passed to the adapter uninterpreted, so a
 /// harness-specific knob never requires a core change.
@@ -218,6 +289,10 @@ pub struct AgentSettings {
     pub executable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Exact CLI/harness version captured by production preflight. Forge never
+    /// guesses this value for historical observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_version: Option<String>,
     /// Overrides `defaults.timeout_secs` for this agent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
@@ -241,6 +316,12 @@ pub struct ForgeConfig {
     pub repository: RepositoryConfig,
     pub workspaces: WorkspacesConfig,
     pub store: StoreConfig,
+    #[serde(default)]
+    pub artifacts: ArtifactRetentionConfig,
+    #[serde(default)]
+    pub resources: ResourceConfig,
+    #[serde(default)]
+    pub containment: ExecutionSandboxConfig,
     pub defaults: DefaultsConfig,
     #[serde(default)]
     pub routing: RoutingConfig,
@@ -263,10 +344,14 @@ impl ForgeConfig {
                 root: format!("{FORGE_DIR}/worktrees"),
                 branch_prefix: "forge/".to_string(),
                 keep_after_run: false,
+                keep_on_failure: true,
             },
             store: StoreConfig {
                 path: format!("{FORGE_DIR}/forge.db"),
             },
+            artifacts: ArtifactRetentionConfig::default(),
+            resources: ResourceConfig::default(),
+            containment: ExecutionSandboxConfig::default(),
             defaults: DefaultsConfig {
                 agent: Some("claude".to_string()),
                 timeout_secs: 3600,
@@ -360,6 +445,70 @@ impl ForgeConfig {
         if self.store.path.trim().is_empty() {
             return Err(ConfigError::Invalid("store.path is empty".into()));
         }
+        if !self.resources.minimum_free_percent.is_finite()
+            || !(0.0..=100.0).contains(&self.resources.minimum_free_percent)
+        {
+            return Err(ConfigError::Invalid(
+                "resources.minimum_free_percent must be between zero and 100".into(),
+            ));
+        }
+        if self.resources.emergency_free_bytes > self.resources.minimum_free_bytes {
+            return Err(ConfigError::Invalid(
+                "resources.emergency_free_bytes must not exceed minimum_free_bytes".into(),
+            ));
+        }
+        if self.resources.disk_watch_interval_secs == 0 {
+            return Err(ConfigError::Invalid(
+                "resources.disk_watch_interval_secs must be greater than zero".into(),
+            ));
+        }
+        if let ExecutionSandboxConfig::Required {
+            runtime,
+            image,
+            network,
+            restricted_network,
+            cpu_millis,
+            memory_bytes,
+            pids_limit,
+            workspace_limit_bytes,
+            credential_env,
+        } = &self.containment
+        {
+            if runtime.trim().is_empty() || image.trim().is_empty() {
+                return Err(ConfigError::Invalid(
+                    "container containment requires non-empty runtime and image".into(),
+                ));
+            }
+            let digest = image.rsplit_once("@sha256:").map(|(_, digest)| digest);
+            if digest.is_none_or(|digest| {
+                digest.len() != 64 || !digest.bytes().all(|value| value.is_ascii_hexdigit())
+            }) {
+                return Err(ConfigError::Invalid(
+                    "containment-required image must be pinned by sha256 digest".into(),
+                ));
+            }
+            if *cpu_millis == 0
+                || *memory_bytes == 0
+                || *pids_limit == 0
+                || *workspace_limit_bytes == 0
+            {
+                return Err(ConfigError::Invalid(
+                    "container CPU, memory, process, and workspace limits must be non-zero".into(),
+                ));
+            }
+            if *network == crate::security::NetworkPolicy::Restricted
+                && restricted_network.as_deref().is_none_or(str::is_empty)
+            {
+                return Err(ConfigError::Invalid(
+                    "restricted container network requires containment.restricted_network".into(),
+                ));
+            }
+            if credential_env.iter().any(|name| name.trim().is_empty()) {
+                return Err(ConfigError::Invalid(
+                    "containment.credential_env contains an empty variable name".into(),
+                ));
+            }
+        }
         if self.defaults.timeout_secs == 0 {
             return Err(ConfigError::Invalid(
                 "defaults.timeout_secs must be greater than zero".into(),
@@ -427,10 +576,38 @@ impl ForgeConfig {
              branch_prefix = \"{branch_prefix}\"\n\
              # Keep worktrees after a run finishes (useful when debugging a run).\n\
              keep_after_run = {keep}\n\
+             # Failed workspaces are diagnostic but not durable evidence.\n\
+             keep_on_failure = {keep_failure}\n\
              \n\
              [store]\n\
              # Experience ledger: runs, events, evaluations, metrics.\n\
              path = \"{store_path}\"\n\
+             \n\
+             [artifacts]\n\
+             # Patches/evaluator evidence remain durable; provider streams are optional.\n\
+             retain_agent_streams = {retain_agent_streams}\n\
+             \n\
+             [resources]\n\
+             # Fail before expensive work if either workspace/store volume is low.\n\
+             minimum_free_bytes = {minimum_free_bytes}\n\
+             minimum_free_percent = {minimum_free_percent}\n\
+             # Terminate a running command before the host reaches ENOSPC.\n\
+             emergency_free_bytes = {emergency_free_bytes}\n\
+             disk_watch_interval_secs = {disk_watch_interval_secs}\n\
+             \n\
+             [containment]\n\
+             # Development compatibility only. Supervised production requires\n\
+             # mode = \"required\" with an explicit image and resource policy.\n\
+             # mode = \"none\" is intentionally unsafe development compatibility.\n\
+             mode = \"none\"\n\
+             # image = \"forge-agent-runtime@sha256:...\"\n\
+             # runtime = \"docker\"\n\
+             # network = \"none\" # none, restricted, or allowed\n\
+             # cpu_millis = 2000\n\
+             # memory_bytes = 4294967296\n\
+             # pids_limit = 256\n\
+             # workspace_limit_bytes = 21474836480\n\
+             # credential_env = [\"CODEX_API_KEY\"]\n\
              \n\
              [defaults]\n\
              agent = \"claude\"\n\
@@ -464,6 +641,7 @@ impl ForgeConfig {
              # [agents.claude]\n\
              # executable = \"claude\"\n\
              # model = \"opus\"\n\
+             # harness_version = \"2.1.223\"\n\
              # timeout_secs = 1800\n\
              # execution_provenance = \"synthetic\" # only for deterministic stubs\n\
              # permission_mode = \"acceptEdits\"\n",
@@ -472,7 +650,13 @@ impl ForgeConfig {
             workspace_root = default.workspaces.root,
             branch_prefix = default.workspaces.branch_prefix,
             keep = default.workspaces.keep_after_run,
+            keep_failure = default.workspaces.keep_on_failure,
             store_path = default.store.path,
+            retain_agent_streams = default.artifacts.retain_agent_streams,
+            minimum_free_bytes = default.resources.minimum_free_bytes,
+            minimum_free_percent = default.resources.minimum_free_percent,
+            emergency_free_bytes = default.resources.emergency_free_bytes,
+            disk_watch_interval_secs = default.resources.disk_watch_interval_secs,
             timeout = default.defaults.timeout_secs,
             minimum_total = default.routing.minimum_total_evidence,
             minimum_agent = default.routing.minimum_agent_evidence,
@@ -614,6 +798,28 @@ mod tests {
             config.validate(),
             Err(ConfigError::UnsupportedVersion { .. })
         ));
+    }
+
+    #[test]
+    fn production_containment_requires_an_immutable_image_digest() {
+        let mut config = ForgeConfig::default_for("forge");
+        config.containment = ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: "forge-runtime:latest".into(),
+            network: crate::security::NetworkPolicy::None,
+            restricted_network: None,
+            cpu_millis: 2_000,
+            memory_bytes: 1024 * 1024 * 1024,
+            pids_limit: 128,
+            workspace_limit_bytes: 4 * 1024 * 1024 * 1024,
+            credential_env: Vec::new(),
+        };
+        assert!(config.validate().is_err());
+
+        if let ExecutionSandboxConfig::Required { image, .. } = &mut config.containment {
+            *image = format!("forge-runtime@sha256:{}", "a".repeat(64));
+        }
+        config.validate().unwrap();
     }
 
     #[test]

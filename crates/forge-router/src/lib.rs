@@ -139,9 +139,8 @@ impl RoutingContract {
         let mut record =
             BaselineRouter::decide(request, evidence, config, decision_id.clone(), created_at);
         record.world_model_snapshot_id = world_model_snapshot_id;
-        self.store.save_routing_decision(&record).await?;
         self.store
-            .append_routing_events(&routing_events(&record))
+            .save_routing_decision_with_events(&record, &routing_events(&record))
             .await?;
         Ok(record)
     }
@@ -194,7 +193,7 @@ impl BaselineRouter {
             compete(&evidence, scores.clone(), margin, reasons)
         } else {
             RoutingDecision::Selected {
-                agent: scores[0].agent.clone(),
+                agent: Box::new(scores[0].agent.clone()),
                 evidence_summary: evidence.summary.clone(),
                 snapshot: evidence.snapshot.clone(),
                 explanation: explanation(reasons),
@@ -203,7 +202,7 @@ impl BaselineRouter {
             }
         };
         let selected = match &decision {
-            RoutingDecision::Selected { agent, .. } => Some(agent.clone()),
+            RoutingDecision::Selected { agent, .. } => Some(agent.as_ref().clone()),
             _ => None,
         };
         RoutingDecisionRecord {

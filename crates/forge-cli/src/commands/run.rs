@@ -14,6 +14,7 @@ use forge_core::routing::{
     RoutingEvidencePolicy, RoutingRequest,
 };
 use forge_core::run::{PatchSummary, RunOutcome, SelectionSource};
+use forge_core::security::ExecutionSandboxConfig;
 use forge_core::task::{EngineeringTask, TaskRevision};
 use forge_git::Repository;
 use forge_router::{
@@ -32,6 +33,14 @@ pub struct RunArgs {
     pub base: Option<String>,
     pub timeout_secs: Option<u64>,
     pub keep_workspace: bool,
+}
+
+struct AutoRunContext<'a> {
+    registry: AgentRegistry,
+    runner: Runner,
+    store: Store,
+    layout: &'a Layout,
+    config: &'a ForgeConfig,
 }
 
 /// What the process exits with.
@@ -61,19 +70,34 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
     let active_policy = runner.ensure_active_policy().await?;
     let agent_id = match args.agent.clone() {
         Some(agent) => agent,
-        None if active_policy.routing.use_learned_routing => "auto".into(),
+        // A learned-routing policy may recommend by default, but unattended
+        // execution always requires the operator to pass `--agent auto`.
+        None if active_policy.routing.use_learned_routing => "recommend".into(),
         None => config.defaults.agent.clone().ok_or_else(|| {
             anyhow!("no agent specified and no `defaults.agent` configured; pass --agent <name>")
         })?,
     };
 
     let registry = AgentRegistry::builtin();
-    if agent_id != "auto" && registry.get(&agent_id).is_none() {
+    if !matches!(agent_id.as_str(), "auto" | "recommend") && registry.get(&agent_id).is_none() {
         bail!("unknown agent `{agent_id}`; run `forge agent list` to see the available agents");
     }
 
-    if agent_id == "auto" {
-        return run_auto(args, task, registry, runner, store, &layout, &config).await;
+    if matches!(agent_id.as_str(), "auto" | "recommend") {
+        let execute_selection = agent_id == "auto";
+        return run_auto(
+            args,
+            task,
+            AutoRunContext {
+                registry,
+                runner,
+                store,
+                layout: &layout,
+                config: &config,
+            },
+            execute_selection,
+        )
+        .await;
     }
 
     let mut request = RunRequest::new(task.clone(), &agent_id);
@@ -106,12 +130,16 @@ pub async fn run(args: RunArgs) -> Result<RunExit> {
 async fn run_auto(
     args: RunArgs,
     task: EngineeringTask,
-    registry: AgentRegistry,
-    runner: Runner,
-    store: Store,
-    layout: &Layout,
-    config: &ForgeConfig,
+    context: AutoRunContext<'_>,
+    execute_selection: bool,
 ) -> Result<RunExit> {
+    let AutoRunContext {
+        registry,
+        runner,
+        store,
+        layout,
+        config,
+    } = context;
     let active_policy = runner.ensure_active_policy().await?;
     let mut requested = Vec::new();
     for descriptor in registry
@@ -122,10 +150,12 @@ async fn run_auto(
         let agent_id = descriptor.agent_id.as_str();
         let mut candidate_request = RunRequest::new(task.clone(), agent_id);
         candidate_request.timeout = args.timeout_secs.map(Duration::from_secs);
-        let agent_config = runner.agent_config(&candidate_request)?;
+        let agent_config = runner.agent_config_for_policy(&candidate_request, &active_policy)?;
         let adapter = registry.adapter(agent_id, &agent_config)?;
         let configured_descriptor = adapter.descriptor();
-        if registry.availability(&configured_descriptor).is_runnable() {
+        if matches!(config.containment, ExecutionSandboxConfig::Required { .. })
+            || registry.availability(&configured_descriptor).is_runnable()
+        {
             requested.push(CandidateRequest {
                 config: agent_config,
                 availability: CandidateAvailability::Available,
@@ -182,10 +212,17 @@ async fn run_auto(
     print_routing(&record, &args.task_path);
 
     let selected = match &record.decision {
-        RoutingDecision::Selected { agent, .. } => agent.clone(),
+        RoutingDecision::Selected { agent, .. } => agent.as_ref().clone(),
         RoutingDecision::InsufficientEvidence { .. }
         | RoutingDecision::CompeteRecommended { .. } => return Ok(RunExit::RoutingStopped),
     };
+    if !execute_selection {
+        println!(
+            "\nRECOMMENDATION ONLY\n  {}\n  No agent was executed; rerun with --agent auto to authorize execution.",
+            selected.agent_id
+        );
+        return Ok(RunExit::RoutingStopped);
+    }
     let selected_id = selected.agent_id.to_string();
     let adapter = registry.adapter(&selected_id, &selected.config)?;
     let mut run_request = RunRequest::new(task.clone(), &selected_id);

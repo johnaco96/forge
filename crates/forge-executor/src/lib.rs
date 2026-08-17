@@ -10,12 +10,17 @@
 
 pub mod error;
 pub mod process;
+pub mod resource;
 pub mod sandbox;
 pub mod workspace;
 
 pub use error::{ExecError, ExecResult};
 pub use process::{ExecOutcome, ExecRequest, ProcessRunner, find_executable};
-pub use sandbox::{EnvPolicy, Redactor};
+pub use resource::{DiskCapacity, DiskPreflightPolicy, DiskWatch, capacity, preflight_disk};
+pub use sandbox::{
+    DockerSandbox, EnvPolicy, ExecutionSandbox, Redactor, SandboxedInvocation,
+    preflight_sandbox_config,
+};
 pub use workspace::{
     PatchCapture, RETAINED_IGNORED_EXCLUSIONS, WorkspaceProvider, WorktreeProvider,
     capture_candidate_patch, capture_patch,
