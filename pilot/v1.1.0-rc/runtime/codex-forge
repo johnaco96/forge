@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Version probing must never require or consume a credential.
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+    exec codex --version
+fi
+
+: "${CODEX_API_KEY:?Forge did not inject the required job-scoped CODEX_API_KEY}"
+
+# Codex's documented non-interactive API-key login reads the key from stdin.
+# HOME is Forge's private per-container tmpfs, so this never persists or mounts
+# host authentication state.
+printf '%s' "$CODEX_API_KEY" | codex login --with-api-key >/dev/null
+unset CODEX_API_KEY
+exec codex "$@"

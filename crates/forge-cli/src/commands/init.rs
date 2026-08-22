@@ -22,6 +22,7 @@ worktrees/
 runs/
 teams/
 forge.db
+forge.db.lock
 forge.db-wal
 forge.db-shm
 ";

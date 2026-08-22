@@ -1,0 +1,34 @@
+task_id: F-PILOT-FD-003
+repository: fd
+objective: >-
+  Permit --max-results to bound the inputs supplied to --exec-batch. Preserve
+  the existing safety conflict with per-result --exec, define zero and one
+  consistently with normal output, and add deterministic integration tests.
+constraints:
+  - Do not change --exec semantics
+  - The batch command must never receive more than the requested maximum
+  - Keep all existing tests passing
+protected_paths: ["Cargo.lock", "LICENSE-*", "CONTRIBUTING.md", "AI_POLICY.md"]
+evaluation:
+  tests:
+    command: "cargo test --locked"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: cargo, version_contains: "cargo 1.93." }
+      - { executable: rustc, version_contains: "rustc 1.93." }
+      - { executable: cc }
+      - { executable: pkg-config }
+  lint:
+    command: "cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -D warnings"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: cargo, version_contains: "cargo 1.93." }
+      - { executable: rustc, version_contains: "rustc 1.93." }
+      - { executable: rustfmt, version_contains: "rustfmt 1." }
+      - { executable: cargo-clippy, version_contains: "clippy 0.1.93" }
+      - { executable: clippy-driver, version_contains: "clippy 0.1.93" }
+      - { executable: cc }
+      - { executable: pkg-config }
+classification: { category: feature, language: rust, domain: execution, difficulty: medium }
+components: ["src/cli.rs", "src/exec", "tests"]
+tags: ["pilot-v1.1.0-rc", "bounded-execution"]

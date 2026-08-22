@@ -178,6 +178,39 @@ pub struct CommandSpec {
     /// deliberately conservative and preserves the Phase 0-1 behavior.
     #[serde(skip_serializing_if = "is_true")]
     pub required: bool,
+    /// Executables which must be present before Forge can trust this command as
+    /// an evaluator. These are declared explicitly instead of inferred from
+    /// shell text, which may contain aliases, paths created by earlier checks,
+    /// or project-local package-manager commands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_tools: Vec<EvaluatorToolRequirement>,
+}
+
+/// One executable required by a frozen evaluator command.
+///
+/// `version_contains` is deliberately a literal output requirement rather
+/// than a package-manager or semver abstraction. It is sufficient for pinned
+/// qualification images and keeps the preflight deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EvaluatorToolRequirement {
+    pub executable: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version_contains: Option<String>,
+}
+
+impl EvaluatorToolRequirement {
+    pub fn new(executable: impl Into<String>) -> Self {
+        Self {
+            executable: executable.into(),
+            version_contains: None,
+        }
+    }
+
+    pub fn with_version_contains(mut self, expected: impl Into<String>) -> Self {
+        self.version_contains = Some(expected.into());
+        self
+    }
 }
 
 impl CommandSpec {
@@ -187,6 +220,7 @@ impl CommandSpec {
             timeout_secs: None,
             working_dir: None,
             required: true,
+            required_tools: Vec::new(),
         }
     }
 }
@@ -207,6 +241,8 @@ pub struct BenchmarkSpec {
     pub metrics_file: Option<String>,
     #[serde(skip_serializing_if = "is_true")]
     pub required: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_tools: Vec<EvaluatorToolRequirement>,
 }
 
 impl BenchmarkSpec {
@@ -217,6 +253,7 @@ impl BenchmarkSpec {
             working_dir: None,
             metrics_file: None,
             required: true,
+            required_tools: Vec::new(),
         }
     }
 
@@ -231,6 +268,7 @@ impl BenchmarkSpec {
             timeout_secs: self.timeout_secs,
             working_dir: self.working_dir.clone(),
             required: self.required,
+            required_tools: self.required_tools.clone(),
         }
     }
 }
@@ -243,6 +281,7 @@ impl From<CommandSpec> for BenchmarkSpec {
             working_dir: spec.working_dir,
             metrics_file: None,
             required: spec.required,
+            required_tools: spec.required_tools,
         }
     }
 }
@@ -284,6 +323,7 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
         let mut working_dir: Option<String> = None;
         let mut metrics_file: Option<String> = None;
         let mut required: Option<bool> = None;
+        let mut required_tools: Option<Vec<EvaluatorToolRequirement>> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
@@ -292,10 +332,11 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
                 "working_dir" => working_dir = Some(map.next_value()?),
                 "metrics_file" => metrics_file = Some(map.next_value()?),
                 "required" => required = Some(map.next_value()?),
+                "required_tools" => required_tools = Some(map.next_value()?),
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown key `{other}`; expected `command`, `timeout_secs`, `working_dir`, \
-                         `metrics_file`, or `required`"
+                         `metrics_file`, `required`, or `required_tools`"
                     )));
                 }
             }
@@ -307,6 +348,7 @@ impl<'de> serde::de::Visitor<'de> for BenchmarkSpecVisitor {
             working_dir,
             metrics_file,
             required: required.unwrap_or(true),
+            required_tools: required_tools.unwrap_or_default(),
         })
     }
 }
@@ -388,6 +430,7 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
         let mut timeout_secs: Option<u64> = None;
         let mut working_dir: Option<String> = None;
         let mut required: Option<bool> = None;
+        let mut required_tools: Option<Vec<EvaluatorToolRequirement>> = None;
 
         while let Some(key) = map.next_key::<String>()? {
             match key.as_str() {
@@ -395,10 +438,11 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
                 "timeout_secs" => timeout_secs = Some(map.next_value()?),
                 "working_dir" => working_dir = Some(map.next_value()?),
                 "required" => required = Some(map.next_value()?),
+                "required_tools" => required_tools = Some(map.next_value()?),
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown key `{other}`; expected `command`, `timeout_secs`, \
-                         `working_dir`, or `required`"
+                         `working_dir`, `required`, or `required_tools`"
                     )));
                 }
             }
@@ -409,6 +453,7 @@ impl<'de> serde::de::Visitor<'de> for CommandSpecVisitor {
             timeout_secs,
             working_dir,
             required: required.unwrap_or(true),
+            required_tools: required_tools.unwrap_or_default(),
         })
     }
 }
@@ -659,6 +704,34 @@ impl EngineeringTask {
                     invalid(&format!("evaluation `{kind}` working directory {reason}"))
                 })?;
             }
+            let mut tools = BTreeSet::new();
+            for requirement in &spec.required_tools {
+                let executable = requirement.executable.trim();
+                if executable.is_empty() {
+                    return Err(invalid(&format!(
+                        "evaluation `{kind}` contains an empty required tool"
+                    )));
+                }
+                if executable.chars().any(char::is_whitespace) {
+                    return Err(invalid(&format!(
+                        "evaluation `{kind}` required tool `{executable}` must name one executable"
+                    )));
+                }
+                if !tools.insert(executable) {
+                    return Err(invalid(&format!(
+                        "evaluation `{kind}` required tool `{executable}` is duplicated"
+                    )));
+                }
+                if requirement
+                    .version_contains
+                    .as_deref()
+                    .is_some_and(|expected| expected.trim().is_empty())
+                {
+                    return Err(invalid(&format!(
+                        "evaluation `{kind}` required tool `{executable}` has an empty version requirement"
+                    )));
+                }
+            }
         }
         for (kind, metrics_file) in self
             .evaluation
@@ -890,6 +963,58 @@ evaluation:
             checks.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             vec!["tests", "lint", "benchmark"]
         );
+    }
+
+    #[test]
+    fn evaluator_prerequisites_are_explicit_and_versioned() {
+        let raw = r#"
+task_id: T-1
+repository: forge
+objective: Verify the frozen evaluator toolchain before execution
+evaluation:
+  lint:
+    command: cargo fmt --check
+    required_tools:
+      - executable: cargo
+        version_contains: "cargo 1.93."
+      - executable: rustfmt
+        version_contains: "rustfmt 1."
+"#;
+        let task: EngineeringTask = serde_yaml_ng::from_str(raw).unwrap();
+        task.validate().unwrap();
+        let tools = &task.evaluation.lint.unwrap().required_tools;
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].executable, "cargo");
+        assert_eq!(tools[1].version_contains.as_deref(), Some("rustfmt 1."));
+    }
+
+    #[test]
+    fn malformed_or_duplicate_evaluator_prerequisites_are_rejected() {
+        let mut task = EngineeringTask {
+            task_id: TaskId::sequential(1),
+            repository: "forge".into(),
+            objective: "Verify the declared evaluator prerequisites".into(),
+            constraints: Vec::new(),
+            evaluation: EvaluationSpec {
+                tests: Some(CommandSpec {
+                    required_tools: vec![
+                        EvaluatorToolRequirement::new("cargo"),
+                        EvaluatorToolRequirement::new("cargo"),
+                    ],
+                    ..CommandSpec::new("cargo test")
+                }),
+                ..Default::default()
+            },
+            protection: Default::default(),
+            metadata: Default::default(),
+            classification: Default::default(),
+            components: Vec::new(),
+            tags: Vec::new(),
+        };
+        assert!(task.validate().is_err());
+        task.evaluation.tests.as_mut().unwrap().required_tools =
+            vec![EvaluatorToolRequirement::new("not one executable")];
+        assert!(task.validate().is_err());
     }
 
     #[test]

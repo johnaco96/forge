@@ -14,8 +14,10 @@
 //! - [`RunOutcome`] — what Forge concluded about the resulting change.
 //!
 //! These genuinely diverge. An agent can exit non-zero, or time out, and still
-//! leave a patch that passes every check. An agent can exit cleanly having
-//! written something broken. Both must be representable without ambiguity.
+//! leave a patch that passes every check. A timeout or cancellation remains
+//! ineligible for PASS even when that partial patch measures green. An agent
+//! can exit cleanly having written something broken. All of those states must
+//! remain representable without ambiguity.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -198,6 +200,9 @@ pub enum InfrastructureFailureKind {
     SandboxUnavailable,
     NetworkPolicyViolation,
     CredentialUnavailable,
+    CredentialPolicyViolation,
+    EvaluatorToolUnavailable,
+    WorkspaceCleanupFailed,
     StoreUnavailable,
 }
 
@@ -210,6 +215,9 @@ impl InfrastructureFailureKind {
             Self::SandboxUnavailable => "sandbox_unavailable",
             Self::NetworkPolicyViolation => "network_policy_violation",
             Self::CredentialUnavailable => "credential_unavailable",
+            Self::CredentialPolicyViolation => "credential_policy_violation",
+            Self::EvaluatorToolUnavailable => "evaluator_tool_unavailable",
+            Self::WorkspaceCleanupFailed => "workspace_cleanup_failed",
             Self::StoreUnavailable => "store_unavailable",
         }
     }
@@ -387,7 +395,7 @@ impl RunOutcome {
         if !execution.status.produced_work() {
             return Self::Errored;
         }
-        match patch {
+        let outcome = match patch {
             None => Self::NoChange,
             Some(patch) if patch.is_empty() => Self::NoChange,
             Some(_) => {
@@ -400,6 +408,16 @@ impl RunOutcome {
                     Some(Verdict::Inconclusive) | None => Self::Inconclusive,
                 }
             }
+        };
+        if outcome == Self::Passed
+            && matches!(
+                execution.status,
+                AgentExecutionStatus::TimedOut | AgentExecutionStatus::Cancelled
+            )
+        {
+            Self::Inconclusive
+        } else {
+            outcome
         }
     }
 
@@ -970,14 +988,25 @@ mod tests {
     }
 
     #[test]
-    fn a_timed_out_agent_that_left_a_working_patch_is_still_judged_on_the_patch() {
+    fn a_timed_out_agent_that_left_a_working_patch_cannot_pass() {
         let outcome = RunOutcome::derive(
             Some(&execution(AgentExecutionStatus::TimedOut)),
             Some(&patch(1)),
             Some(Verdict::Pass),
             None,
         );
-        assert_eq!(outcome, RunOutcome::Passed);
+        assert_eq!(outcome, RunOutcome::Inconclusive);
+    }
+
+    #[test]
+    fn a_cancelled_agent_that_left_a_working_patch_cannot_pass() {
+        let outcome = RunOutcome::derive(
+            Some(&execution(AgentExecutionStatus::Cancelled)),
+            Some(&patch(1)),
+            Some(Verdict::Pass),
+            None,
+        );
+        assert_eq!(outcome, RunOutcome::Inconclusive);
     }
 
     #[test]

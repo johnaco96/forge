@@ -1,0 +1,186 @@
+pilot_id: forge-v1.1.0-rc4-production-boundary-hardening-2026-08
+qualification_stratum: production-qualification-stratum-4
+derived_from: pilot/v1.1.0-rc3/manifest.yaml
+frozen_at: 2026-08-22T21:39:22Z
+status: frozen-before-model-outcomes
+amendment: { path: pilot/v1.1.0-rc4/amendment.md, sha256: c8743709faf765991b8a20228ea41042e4892ae9ca58555bf8bb9e1c0114bac1 }
+historical_evidence:
+  rc1_manifest_sha256: 5861383dae16e01aea5ae817a8fc2494f753121e76abc59f5edcf5fa476a5ce3
+  rc2_manifest_sha256: 23cf4fffb58d4a20f6579fc9c6026f1f8cb07b6122687e15193aa6be90adc00f
+  rc3_manifest_sha256: 70c7e7f17cf0809e2fc24d80428d58b653f87e4aed5b0426571ee869fe51379e
+  tier1_master_sha256: b283ef15c92f3c4c54f104900234638c2c46b2919a2f13a14f7435f3b27903b9
+  historical_records_unchanged: true
+forge:
+  version: 1.1.0
+  branch: main
+  starting_commit: be770b858e3aeff90618494b4fc0d133333527ef
+  qualification_tree: uncommitted-human-review
+  product_source_scope: [Cargo.toml, Cargo.lock, rust-toolchain.toml, crates]
+  product_source_files: 139
+  product_source_identity_algorithm: sha256-length-framed-relative-path-and-file-bytes-v1
+  product_source_identity: 8742c698919b3810d26d0795620e11f35eaaf55924d91d008adc7fa9966de839
+  complete_candidate_diff_algorithm: git-binary-diff-plus-sorted-no-index-untracked-product-files-v1
+  complete_candidate_diff_bytes: 239266
+  complete_candidate_diff_sha256: 543a2d1b2d68a462b11bc3aba0d356826877089f417b2369ef80d006ba89c910
+  untracked_product_files: [crates/forge-cli/src/commands/agent_probe.rs]
+  commit_deferred_by_unsatisfied_release_gates: true
+sandbox:
+  image: localhost:5000/forge/pilot-runtime@sha256:5624e2d6abe5fb52282963dbd41e1c9e7c1f3a18653bef2726b4c17e42fecde2
+  image_id: sha256:44deba43a2ed6c8f3d40d551164c7ccc128ab9b04b5f3fdeea525f86fee8b1c3
+  platform: linux/arm64
+  size_bytes: 2303808514
+  source_tree_label: 8742c698919b3810d26d0795620e11f35eaaf55924d91d008adc7fa9966de839
+  build_definition: { path: pilot/v1.1.0-rc4/runtime/Dockerfile, sha256: 07e855ccaa20611a2302e1557d65dbbede01ffb6db359eec2322de7f35ce7f7b }
+  claude_wrapper: { path: pilot/v1.1.0-rc4/runtime/claude-forge, sha256: 91eff694f5eda177ddb0cddc2e8f34caf5c6dac0f22387f9f3aaad30507fbb5f }
+  codex_wrapper: { path: pilot/v1.1.0-rc4/runtime/codex-forge, sha256: 14b9bdddb5cf075bc330f8367b97d265698c40e094c434d0e5ce433f08d57c61 }
+  base_images:
+    node: node:24-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03
+    rust: rust:1.93-bookworm@sha256:7c4ae649a84014c467d79319bbf17ce2632ae8b8be123ac2fb2ea5be46823f31
+  runtimes:
+    rustc: 1.93.1
+    cargo: 1.93.1
+    rustfmt: 1.8.0
+    clippy: 0.1.93
+    node: 24.19.0
+    pnpm: 10.12.1
+    python: 3.11.2
+    pip: 23.0.1
+    git: 2.39.5
+    claude: 2.1.223
+    codex: 0.147.0
+containment:
+  trusted_security_boundary: forge-oci-v1
+  mode: required
+  fallback: forbidden
+  root_filesystem: read-only
+  init_shim: true
+  linux_capabilities: none
+  no_new_privileges: true
+  nested_agent_sandbox: disabled-inside-trusted-outer-boundary
+  mounts: candidate worktree writable; Git common directory and linked-worktree pointer read-only
+  excluded_mounts: [primary_worktree, host_home, host_ssh, host_aws, host_config, host_codex, host_claude, docker_socket]
+  home: private per-command 256 MiB tmpfs
+  tmp: private per-command 1 GiB executable tmpfs
+  cpu_millis: 2000
+  memory_bytes: 4294967296
+  pids_limit: 256
+  workspace_limit_bytes: 21474836480
+  minimum_free_bytes: 1073741824
+  minimum_free_percent: 10
+  emergency_free_bytes: 536870912
+  disk_watch_interval_secs: 5
+  timeout_secs: 1800
+network:
+  policy: allowed
+  rationale: provider APIs and reproducible evaluator dependency installation require egress
+  forge_enforced: ordinary Docker bridge selection
+  limitation: destination allowlisting remains operator-managed
+credentials:
+  source: current job process environment only
+  host_login_fallback: forbidden
+  host_credential_mounts: forbidden
+  evaluator_credentials: none
+  claude: [ANTHROPIC_API_KEY]
+  codex: [CODEX_API_KEY]
+  wrapper_protocols:
+    claude: forge-oci-bare-one-shot-api-key-helper-v1
+    codex: forge-oci-ephemeral-home-login-v1
+  exact_value_candidate_scan: mandatory-before-durable-capture
+profiles:
+  - { path: pilot/v1.1.0-rc4/profiles/fd-claude.toml, sha256: a9b906e75dfb445544ad65fb924e39f1733e5dacc6e95c9c297103cb4315f063 }
+  - { path: pilot/v1.1.0-rc4/profiles/httpx-codex.toml, sha256: 8474e34aaaf7cd805a71a077a727a0bf27a2fa4e82561fb1407668b6295733fa }
+  - { path: pilot/v1.1.0-rc4/profiles/zod-claude.toml, sha256: 042262eb4dede83865d9e8dadc005c6ab74af9992b4fde56f31da649de4d44e6 }
+repositories:
+  - { id: fd, url: https://github.com/sharkdp/fd.git, commit: ee20f426ddf338ac7ead5c5f00ea49258005caaf, ecosystem: Rust }
+  - { id: httpx, url: https://github.com/encode/httpx.git, commit: b5addb64f0161ff6bfe94c124ef76f6a1fba5254, ecosystem: Python }
+  - { id: zod, url: https://github.com/colinhacks/zod.git, commit: 9f0a3d81221e3ab7c09ca4911ef35b54817869a4, ecosystem: TypeScript }
+# Prepared as a sibling of the Forge checkout; this logical name is portable
+# and intentionally avoids a machine-specific absolute path.
+prepared_pilot_workspace: forge-pilot-v1.1.0-rc4
+routing:
+  mode: recommendation-shadow-only
+  execution_authority: preregistered-explicit-agent
+  minimum_score_margin: 0.05
+  automatic_routing: false
+  holdout_consumed: false
+  automatic_merge: false
+  automatic_policy_promotion: false
+  automatic_team_dispatch: false
+  effective_configuration_fingerprints:
+    fd: { claude: 448216ee9c77f693, codex: ef48815b9b611461 }
+    httpx: { claude: aed8a79533aa0b26, codex: 10f30c1b525492ef }
+    zod: { claude: 9d274a31f608dc3c, codex: 403a90c3a6739c4a }
+router_shadow_observations:
+  - { task: F-PILOT-FD-001, revision: TR-2d1e63c8825b91e08b2f8479c3d46bc0c4b8baa283cf28c8e8b2b70ae91d342f, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:44.999687Z, evidence: 4f8bba0c4c0f32ed55b057a8ae7a96311eccd994f1d0eb50a1eebd8f79c73e1f }
+  - { task: F-PILOT-FD-002, revision: TR-3cc8991fed709191dfe463f3920798a0222688d5db87505869d7f4510ddd9fea, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:58.990985Z, evidence: 6f88b26c9575556c958fd385e96c3873c27d92520a2ccef1abfd513873936f1c }
+  - { task: F-PILOT-FD-003, revision: TR-eaf613b687fe2f904b71edb800d449159f3facdde69e98b06d3dc3655a86047e, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.039272Z, evidence: 6a79bed87ac19ae31178a6b62a9394005818ecff28d44b923240cce977d8e213 }
+  - { task: F-PILOT-HTTPX-001, revision: TR-230d21c55edf89278f0d34e860d778a3020e04ddef308f4a7f9ff6d83a2580c7, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.079980Z, evidence: 5a3e41f635ec9b80258a2a087de7e50027bdc74040c05e2adaf7a912aaf68aa8 }
+  - { task: F-PILOT-HTTPX-002, revision: TR-12e3b85f36b8fa0ba8d2422498f50ffafe9c796dec75d474dbdb710ba9b6dc85, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.119395Z, evidence: 9440b81babee72e28edcce1480b1125a52389f317fb528815aa9bb085b3426cc }
+  - { task: F-PILOT-HTTPX-003, revision: TR-1a26be110d6c014c675cc16728701776b9809eaec8daf6d2687325658ac68e35, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.159870Z, evidence: f802f1a4920ef619d42bf2d9e4323da6eabcd593cbb2cf319784d8cb418277ec }
+  - { task: F-PILOT-ZOD-001, revision: TR-b55f0198dc2f593492bf118163223d6e6ba37b0694ebc44d86358d113bc2800f, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.203001Z, evidence: f9d36169d1a4d78f8ebc79a1a649790555be0afcdd76a59d6ee43f7c404f4626 }
+  - { task: F-PILOT-ZOD-002, revision: TR-a3cd83ed3977ac8f6a53b433aff8ee4c94aaa906b7f6ab02e075f88f14effb1c, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.242232Z, evidence: 1f69fa25d8f7688b900dc00094b3d95af941841ee7846849456ff0d99df35220 }
+  - { task: F-PILOT-ZOD-003, revision: TR-eac428fba7bd06ae8f0c98d35ac19e9e2bbe376d740b5e09dff4af6eacff92f0, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-22T21:38:59.281735Z, evidence: 475dd873c400a009f2f2b26566510e32b091829182f04fca08c3dde989c383ac }
+tasks:
+  - { id: F-PILOT-FD-001, source: pilot/v1.1.0-rc3/tasks/fd/F-PILOT-FD-001.yaml, agent: claude, sha256: d816623dcdf7cdb9d1c584c0d56deb953224327934daf5a5b0ba3061ac85be08 }
+  - { id: F-PILOT-FD-002, source: pilot/v1.1.0-rc3/tasks/fd/F-PILOT-FD-002.yaml, agent: claude, sha256: ae22af1aa5b991f230e661c8eb7b2e4f80ab0ad262ab5b3f023098508edd5573 }
+  - { id: F-PILOT-FD-003, source: pilot/v1.1.0-rc3/tasks/fd/F-PILOT-FD-003.yaml, agent: claude, sha256: 9745b5dc4745ebab6ca0a6b6f10993380778b57c3a5063fa4ee7984cc58d9d33 }
+  - { id: F-PILOT-HTTPX-001, source: pilot/v1.1.0-rc3/tasks/httpx/F-PILOT-HTTPX-001.yaml, agent: codex, sha256: 667042199647dd5f53527f9b8be29a4ae767b7a9a209a841522aa831b4b924f9 }
+  - { id: F-PILOT-HTTPX-002, source: pilot/v1.1.0-rc3/tasks/httpx/F-PILOT-HTTPX-002.yaml, agent: codex, sha256: 86e8b9aa40ebb36d1028846c5750613bcc3fdf47116c74a59feb015a6c2ab836 }
+  - { id: F-PILOT-HTTPX-003, source: pilot/v1.1.0-rc3/tasks/httpx/F-PILOT-HTTPX-003.yaml, agent: codex, sha256: e97b1e1ecbac6fcb3d3a04aab5af90f04ae7af67f40f9b4a8ab830011a22a571 }
+  - { id: F-PILOT-ZOD-001, source: pilot/v1.1.0-rc3/tasks/zod/F-PILOT-ZOD-001.yaml, agent: claude, sha256: 3f0dfb9128994b401cfd45a6e2b8967a40fc0c1b4ebd68d63a50ad8d74c0b3f7 }
+  - { id: F-PILOT-ZOD-002, source: pilot/v1.1.0-rc3/tasks/zod/F-PILOT-ZOD-002.yaml, agent: claude, sha256: 485877dc6f48a3a9bf4ba96edab722539130679e42efee87559994acd61250c2 }
+  - { id: F-PILOT-ZOD-003, source: pilot/v1.1.0-rc3/tasks/zod/F-PILOT-ZOD-003.yaml, agent: claude, sha256: 9bc2c20c420b7a8fe0ddb42e01c25b09b3b685abcfc9b88adb6201915cbcaacc }
+qualification_inputs:
+  pilot_plan: { path: validation/external-pilot/plan.json, sha256: 6d94f2f4574407b0f22a258cb3305df3a14c22580d936daea0e5b2407a7a588e }
+  pilot_validator: { path: scripts/validate-pilot.py, sha256: e9b8b1b9eb9114f5394b39e2a75eec2af1830013a76d73f788550617496c4844 }
+  ci: { path: .github/workflows/ci.yml, sha256: 2278adb596ee17c7a4e6ed7edc337f3857f9589835aa7296b4f75a4eb2fa6a9d }
+  security_ci: { path: .github/workflows/security.yml, sha256: aedd9603870101fc0447529b87bcadbccb4f2d7f215c72e5248f67ef10b8dec7 }
+  release_ci: { path: .github/workflows/release.yml, sha256: 993781a76e4c673c4426665d31fb7fd1dc1dea179028c4536a2c98600d03ed70 }
+native_artifact:
+  path: dist/v1.1.0-rc4/forge-1.1.0-darwin-arm64.tar.gz
+  platform: darwin/arm64
+  sha256: 13f887a5886456642ddee6e5a73389af19df843f1a783a0457cd5db585aae097
+  deterministic_double_build: pass
+local_qualification:
+  rust_workspace: 709_passed_5_ignored_0_failed
+  ignored_docker_tests: 5_passed_0_failed
+  tier1_analysis_tests: 8_passed
+  exact_image_evaluator_command_sets: 9_runnable_with_2_expected_baseline_failures
+  dependency_audit: pass_247_dependencies_1225_advisories_loaded
+  migration_gate: pass
+  recovery_drill: pass
+  rollback_deployment_unit: pass
+  successful_claude_live_probe: false
+  successful_codex_live_probe: false
+  rc4_pilot_attempts: 0
+  pre_outcome_shadow_decisions: 9_insufficient_evidence_at_zero_margin
+remote_ci:
+  status: blocked
+  reason: no-approved-git-remote-configured
+acceptance:
+  attempts_required: 9
+  independently_resolved_forge_outcomes_required: 9
+  successful_live_provider_probes: [claude, codex]
+  critical_failure_drills: all-pass
+  doctor: all-profiles-green-including-live-probe
+  evaluator_substrate: all-nine-task-plans-qualified
+  infrastructure_failures: 0
+  production_class_defects: 0
+  disk_preflight_minimum_percent: 10
+  remote_ci: green-or-release-blocked
+  human_candidate_and_release_review: required
+retention:
+  mandatory_durable_days: 365
+  provider_streams_days: 30
+  failed_workspaces_days: 7
+  reproducible_caches_max_hours: 24
+  successful_workspaces: cleanup_after_verified-durable-capture
+  non_pass_with_keep_on_failure: preserve-except-credential-contamination
+recovery:
+  rpo: one-completed-run-or-24-hours-whichever-is-smaller
+  rto_minutes: 15
+  rollback_unit: previous-binary-plus-version-matched-config-plus-verified-database-backup
+stopping_rules:
+  - stop before model tasks unless both successful live probes, exact-image doctor, manifest, local release gate, critical drills, substrate qualification, and disk preflight are green
+  - stop immediately on credential inheritance, missing evaluator prerequisites, escape, secret exposure, contamination, corruption, evidence loss, cleanup misreporting, migration damage, or resource misclassification
+  - stop before merge, commit, tag, push, publication, automatic routing, promotion, or dispatch for human review

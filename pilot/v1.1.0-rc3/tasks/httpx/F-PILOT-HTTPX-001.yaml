@@ -1,0 +1,25 @@
+task_id: F-PILOT-HTTPX-001
+repository: httpx
+objective: >-
+  Eliminate the deterministic ResourceWarning in the Trio variant of
+  test_write_timeout by closing request-body async streams correctly. Do not
+  suppress warnings or weaken timeout behavior; asyncio and Trio must both pass.
+constraints:
+  - Preserve the public timeout exception contract
+  - Do not globally filter ResourceWarning
+  - Add or refine focused regression coverage in existing tests
+protected_paths: ["requirements.txt", "LICENSE.md", ".github/**"]
+evaluation:
+  tests:
+    command: "python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && .pilot-venv/bin/pytest -q tests/test_timeouts.py::test_write_timeout"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+  lint:
+    command: 'python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && PATH="$PWD/.pilot-venv/bin:$PATH" ./scripts/check'
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+classification: { category: debugging, language: python, domain: timeouts, difficulty: medium }
+components: ["httpx", "tests/test_timeouts.py"]
+tags: ["pilot-v1.1.0-rc", "trio", "resource-cleanup"]

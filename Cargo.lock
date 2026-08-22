@@ -597,6 +597,7 @@ version = "1.1.0"
 dependencies = [
  "chrono",
  "forge-core",
+ "fs2",
  "serde",
  "serde_json",
  "sqlx",

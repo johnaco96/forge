@@ -1,0 +1,69 @@
+version = 1
+
+[repository]
+name = "zod"
+
+[workspaces]
+root = ".forge/worktrees"
+branch_prefix = "forge/pilot-rc3/"
+keep_after_run = false
+keep_on_failure = true
+
+[store]
+path = ".forge/forge.db"
+
+[artifacts]
+retain_agent_streams = true
+
+[resources]
+minimum_free_bytes = 1073741824
+minimum_free_percent = 10.0
+emergency_free_bytes = 536870912
+disk_watch_interval_secs = 5
+
+[containment]
+mode = "required"
+runtime = "docker"
+image = "localhost:5000/forge/pilot-runtime@sha256:ede1b16e60b242ddb5edd00a32327cb4ba535b08ba08cef16a3715e05f296104"
+network = "allowed"
+cpu_millis = 2000
+memory_bytes = 4294967296
+pids_limit = 256
+workspace_limit_bytes = 21474836480
+credential_env = ["ANTHROPIC_API_KEY"]
+
+[defaults]
+agent = "claude"
+timeout_secs = 1800
+
+[routing]
+minimum_total_evidence = 10
+minimum_agent_evidence = 3
+minimum_score_margin = 0.05
+exploration_policy = "none"
+periodic_competition_interval = 10
+
+[routing.baseline]
+prior_alpha = 1.0
+prior_beta = 1.0
+
+[team]
+max_parallel_nodes = 1
+stop_on_required_node_failure = true
+
+[world_model]
+enabled = true
+structure = true
+task_metadata = true
+history = true
+
+[agents.claude]
+executable = "claude"
+harness_version = "2.1.223"
+permission_mode = "bypassPermissions"
+
+[agents.codex]
+executable = "codex-forge"
+harness_version = "0.147.0"
+sandbox_mode = "workspace-write"
+approval_policy = "never"

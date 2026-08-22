@@ -13,13 +13,20 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use forge_core::run::{InfrastructureFailure, InfrastructureFailureKind};
 use forge_core::security::{ExecutionSandboxConfig, NetworkPolicy};
+use forge_core::task::EvaluatorToolRequirement;
 
 use crate::error::{ExecError, ExecResult};
 use crate::process::ExecRequest;
+
+/// Docker control-plane calls happen outside an individual command's timeout.
+/// Bound them separately so a wedged daemon cannot hang doctor, cleanup, or a
+/// production probe forever.
+const RUNTIME_CONTROL_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Environment variables passed through by [`EnvPolicy::conservative`].
 ///
@@ -236,9 +243,14 @@ impl Redactor {
 
     pub fn with_secret(mut self, secret: impl Into<String>) -> Self {
         let secret = secret.into();
-        if secret.len() >= MIN_REDACTABLE_LEN {
+        // Callers use this method for values explicitly designated as secrets.
+        // Unlike ambient-variable discovery, there is no false-positive tradeoff:
+        // even a short test token or unusual provider credential must not be
+        // persisted in a command label or captured stream.
+        if !secret.is_empty() {
             self.secrets.push(secret);
             self.secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
+            self.secrets.dedup();
         }
         self
     }
@@ -289,9 +301,10 @@ pub struct DockerSandbox {
     cpu_millis: u32,
     memory_bytes: u64,
     pids_limit: u32,
-    credential_env: Vec<String>,
+    allowed_credential_env: Vec<String>,
     workspace: PathBuf,
     git_dir: PathBuf,
+    git_link: Option<PathBuf>,
     container_name: String,
 }
 
@@ -318,7 +331,14 @@ impl DockerSandbox {
         };
         let workspace = canonical_mount(workspace)?;
         let git_dir = canonical_mount(git_common_dir)?;
-        for path in [&workspace, &git_dir] {
+        let worktree_git = workspace.join(".git");
+        let git_link = if worktree_git.exists() {
+            let link = canonical_mount(&worktree_git)?;
+            (link != git_dir).then_some(link)
+        } else {
+            None
+        };
+        for path in [&workspace, &git_dir].into_iter().chain(git_link.iter()) {
             if path.to_string_lossy().contains(',') {
                 return Err(infrastructure(
                     InfrastructureFailureKind::SandboxUnavailable,
@@ -347,9 +367,10 @@ impl DockerSandbox {
             cpu_millis: *cpu_millis,
             memory_bytes: *memory_bytes,
             pids_limit: *pids_limit,
-            credential_env: credential_env.clone(),
+            allowed_credential_env: credential_env.clone(),
             workspace,
             git_dir,
+            git_link,
             container_name: format!("forge-{safe_label}-{}", std::process::id()),
         })))
     }
@@ -367,51 +388,29 @@ impl DockerSandbox {
         }
     }
 
-    fn docker_environment(&self, child_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    fn docker_client_environment(&self) -> BTreeMap<String, String> {
         let mut environment = BTreeMap::new();
         for name in ["PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT"] {
             if let Ok(value) = std::env::var(name) {
                 environment.insert(name.to_string(), value);
             }
         }
-        for name in &self.credential_env {
-            if let Some(value) = child_env.get(name) {
-                environment.insert(name.clone(), value.clone());
-            }
-        }
         environment
     }
 
     async fn runtime_status(&self, args: &[&str]) -> ExecResult<std::process::Output> {
-        tokio::process::Command::new(&self.runtime)
+        let mut command = tokio::process::Command::new(&self.runtime);
+        command
             .args(args)
             .env_clear()
-            .envs(self.docker_environment(&BTreeMap::new()))
-            .output()
-            .await
-            .map_err(|source| {
-                infrastructure(
-                    InfrastructureFailureKind::SandboxUnavailable,
-                    format!(
-                        "could not execute container runtime `{}`: {source}",
-                        self.runtime
-                    ),
-                )
-            })
+            .envs(self.docker_client_environment());
+        bounded_runtime_output(command, &self.runtime, RUNTIME_CONTROL_TIMEOUT).await
     }
 }
 
 #[async_trait]
 impl ExecutionSandbox for DockerSandbox {
     async fn preflight(&self) -> ExecResult<()> {
-        for name in &self.credential_env {
-            if std::env::var_os(name).is_none() {
-                return Err(infrastructure(
-                    InfrastructureFailureKind::CredentialUnavailable,
-                    format!("required job credential `{name}` is not present"),
-                ));
-            }
-        }
         let version = self
             .runtime_status(&["version", "--format", "{{.Server.Version}}"])
             .await?;
@@ -458,6 +457,10 @@ impl ExecutionSandbox for DockerSandbox {
             "run".into(),
             "--name".into(),
             self.container_name.clone(),
+            // Provider and evaluator commands are PID 1 without this shim;
+            // Docker's minimal init forwards signals and reaps orphaned
+            // grandchildren inside the container.
+            "--init".into(),
             "--read-only".into(),
             "--cap-drop=ALL".into(),
             "--security-opt=no-new-privileges".into(),
@@ -475,6 +478,18 @@ impl ExecutionSandbox for DockerSandbox {
                 self.git_dir.display(),
                 self.git_dir.display()
             ),
+        ];
+        if let Some(git_link) = &self.git_link {
+            args.extend([
+                "--mount".into(),
+                format!(
+                    "type=bind,src={},dst={},readonly",
+                    git_link.display(),
+                    git_link.display()
+                ),
+            ]);
+        }
+        args.extend([
             "--tmpfs".into(),
             "/tmp:rw,exec,nosuid,nodev,size=1g".into(),
             "--tmpfs".into(),
@@ -495,7 +510,7 @@ impl ExecutionSandbox for DockerSandbox {
             self.memory_bytes.to_string(),
             "--pids-limit".into(),
             self.pids_limit.to_string(),
-        ];
+        ]);
         #[cfg(unix)]
         {
             args.push("--user".into());
@@ -509,15 +524,29 @@ impl ExecutionSandbox for DockerSandbox {
                 args.push(format!("{name}={value}"));
             }
         }
-        for name in &self.credential_env {
-            if !child_env.contains_key(name) {
+        let mut docker_environment = self.docker_client_environment();
+        for name in request.credential_policy.required_names() {
+            if !self
+                .allowed_credential_env
+                .iter()
+                .any(|allowed| allowed == name)
+            {
                 return Err(infrastructure(
-                    InfrastructureFailureKind::CredentialUnavailable,
-                    format!("required job credential `{name}` was filtered before injection"),
+                    InfrastructureFailureKind::CredentialPolicyViolation,
+                    format!(
+                        "credential `{name}` required by this command is not approved by the sandbox allowlist"
+                    ),
                 ));
             }
+            let value = child_env.get(name).ok_or_else(|| {
+                infrastructure(
+                    InfrastructureFailureKind::CredentialUnavailable,
+                    format!("credential `{name}` required by this command is not present"),
+                )
+            })?;
             args.push("--env".into());
-            args.push(name.clone());
+            args.push(name.to_string());
+            docker_environment.insert(name.to_string(), value.clone());
         }
         args.push(self.image.clone());
         args.push(request.program.clone());
@@ -526,7 +555,7 @@ impl ExecutionSandbox for DockerSandbox {
             program: self.runtime.clone(),
             args,
             cwd: request.cwd.clone(),
-            env: self.docker_environment(child_env),
+            env: docker_environment,
         })
     }
 
@@ -604,20 +633,11 @@ pub async fn preflight_sandbox_config(config: &ExecutionSandboxConfig) -> ExecRe
         image,
         network,
         restricted_network,
-        credential_env,
         ..
     } = config
     else {
         return Ok(());
     };
-    for name in credential_env {
-        if std::env::var_os(name).is_none() {
-            return Err(infrastructure(
-                InfrastructureFailureKind::CredentialUnavailable,
-                format!("required job credential `{name}` is not present"),
-            ));
-        }
-    }
     if !sandbox_runtime_status(runtime, &["version", "--format", "{{.Server.Version}}"])
         .await?
         .status
@@ -659,6 +679,196 @@ pub async fn preflight_sandbox_config(config: &ExecutionSandboxConfig) -> ExecRe
     Ok(())
 }
 
+/// Proves that an agent harness is installed and runnable inside the exact
+/// required-containment image. This probe intentionally receives no provider
+/// credentials and uses no host mounts or network access.
+pub async fn preflight_sandbox_executable(
+    config: &ExecutionSandboxConfig,
+    executable: &str,
+) -> ExecResult<String> {
+    let ExecutionSandboxConfig::Required {
+        runtime,
+        image,
+        cpu_millis,
+        memory_bytes,
+        pids_limit,
+        ..
+    } = config
+    else {
+        return Err(infrastructure(
+            InfrastructureFailureKind::SandboxUnavailable,
+            "sandbox executable preflight requires containment mode `required`",
+        ));
+    };
+    let cpus = format!("{:.3}", *cpu_millis as f64 / 1000.0);
+    let memory = memory_bytes.to_string();
+    let pids = pids_limit.to_string();
+    let output = sandbox_runtime_status(
+        runtime,
+        &[
+            "run",
+            "--rm",
+            "--init",
+            "--read-only",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges",
+            "--network=none",
+            "--cpus",
+            &cpus,
+            "--memory",
+            &memory,
+            "--pids-limit",
+            &pids,
+            "--tmpfs",
+            "/tmp:rw,exec,nosuid,nodev,size=64m",
+            "--tmpfs",
+            "/home/forge:rw,nosuid,nodev,size=32m",
+            "--env",
+            "HOME=/home/forge",
+            "--entrypoint",
+            "/bin/sh",
+            image,
+            "-c",
+            "command -v \"$1\" >/dev/null && \"$1\" --version",
+            "forge-harness-preflight",
+            executable,
+        ],
+    )
+    .await?;
+    if !output.status.success() {
+        return Err(infrastructure(
+            InfrastructureFailureKind::SandboxUnavailable,
+            format!(
+                "agent executable `{executable}` is not runnable inside `{image}`: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
+        ));
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        return Err(infrastructure(
+            InfrastructureFailureKind::SandboxUnavailable,
+            format!("agent executable `{executable}` inside `{image}` returned an empty version"),
+        ));
+    }
+    Ok(version)
+}
+
+/// Proves that a declared evaluator prerequisite is runnable in the exact
+/// configured execution substrate before an agent is invoked.
+pub async fn preflight_sandbox_evaluator_tool(
+    config: &ExecutionSandboxConfig,
+    evaluator_id: &str,
+    requirement: &EvaluatorToolRequirement,
+) -> ExecResult<String> {
+    let executable = &requirement.executable;
+    let output = match config {
+        ExecutionSandboxConfig::None => {
+            let path = crate::process::find_executable(executable).ok_or_else(|| {
+                infrastructure(
+                    InfrastructureFailureKind::EvaluatorToolUnavailable,
+                    format!(
+                        "evaluator `{evaluator_id}` requires unavailable host tool `{executable}`"
+                    ),
+                )
+            })?;
+            tokio::process::Command::new(path)
+                .arg("--version")
+                .output()
+                .await
+                .map_err(|source| ExecError::Io {
+                    context: format!(
+                        "probing evaluator `{evaluator_id}` prerequisite `{executable}`"
+                    ),
+                    source,
+                })?
+        }
+        ExecutionSandboxConfig::Required {
+            runtime,
+            image,
+            cpu_millis,
+            memory_bytes,
+            pids_limit,
+            ..
+        } => {
+            let cpus = format!("{:.3}", *cpu_millis as f64 / 1000.0);
+            let memory = memory_bytes.to_string();
+            let pids = pids_limit.to_string();
+            sandbox_runtime_status(
+                runtime,
+                &[
+                    "run",
+                    "--rm",
+                    "--init",
+                    "--read-only",
+                    "--cap-drop=ALL",
+                    "--security-opt=no-new-privileges",
+                    "--network=none",
+                    "--cpus",
+                    &cpus,
+                    "--memory",
+                    &memory,
+                    "--pids-limit",
+                    &pids,
+                    "--tmpfs",
+                    "/tmp:rw,exec,nosuid,nodev,size=64m",
+                    "--tmpfs",
+                    "/home/forge:rw,nosuid,nodev,size=32m",
+                    "--env",
+                    "HOME=/home/forge",
+                    "--entrypoint",
+                    "/bin/sh",
+                    image,
+                    "-c",
+                    "command -v \"$1\" >/dev/null && \"$1\" --version",
+                    "forge-evaluator-tool-preflight",
+                    executable,
+                ],
+            )
+            .await?
+        }
+    };
+
+    let reported = [
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+        String::from_utf8_lossy(&output.stderr).trim().to_string(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect::<Vec<_>>()
+    .join("\n");
+    let version_matches = requirement
+        .version_contains
+        .as_deref()
+        .is_none_or(|expected| reported.contains(expected));
+    if output.status.success() && version_matches {
+        return Ok(reported);
+    }
+
+    let detail = if output.status.success() {
+        format!(
+            "evaluator `{evaluator_id}` requires tool `{executable}` with version output containing `{}`, but it reported `{reported}`",
+            requirement
+                .version_contains
+                .as_deref()
+                .expect("success with mismatch requires a version constraint")
+        )
+    } else {
+        format!(
+            "evaluator `{evaluator_id}` requires unavailable tool `{executable}`{}",
+            if reported.is_empty() {
+                String::new()
+            } else {
+                format!(": {reported}")
+            }
+        )
+    };
+    Err(infrastructure(
+        InfrastructureFailureKind::EvaluatorToolUnavailable,
+        detail,
+    ))
+}
+
 async fn sandbox_runtime_status(runtime: &str, args: &[&str]) -> ExecResult<std::process::Output> {
     let mut command = tokio::process::Command::new(runtime);
     command.args(args).env_clear();
@@ -667,12 +877,30 @@ async fn sandbox_runtime_status(runtime: &str, args: &[&str]) -> ExecResult<std:
             command.env(name, value);
         }
     }
-    command.output().await.map_err(|error| {
-        infrastructure(
+    bounded_runtime_output(command, runtime, RUNTIME_CONTROL_TIMEOUT).await
+}
+
+async fn bounded_runtime_output(
+    mut command: tokio::process::Command,
+    runtime: &str,
+    timeout: Duration,
+) -> ExecResult<std::process::Output> {
+    command.kill_on_drop(true);
+    match tokio::time::timeout(timeout, command.output()).await {
+        Ok(result) => result.map_err(|error| {
+            infrastructure(
+                InfrastructureFailureKind::SandboxUnavailable,
+                format!("could not execute container runtime `{runtime}`: {error}"),
+            )
+        }),
+        Err(_) => Err(infrastructure(
             InfrastructureFailureKind::SandboxUnavailable,
-            format!("could not execute container runtime `{runtime}`: {error}"),
-        )
-    })
+            format!(
+                "container runtime `{runtime}` control command timed out after {} seconds",
+                timeout.as_secs()
+            ),
+        )),
+    }
 }
 
 fn canonical_mount(path: &Path) -> ExecResult<PathBuf> {
@@ -707,6 +935,27 @@ mod tests {
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn container_runtime_control_commands_have_a_hard_timeout() {
+        let mut command = tokio::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        let started = std::time::Instant::now();
+        let error = bounded_runtime_output(command, "fixture-runtime", Duration::from_millis(25))
+            .await
+            .unwrap_err();
+
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::SandboxUnavailable,
+                ..
+            })
+        ));
+        assert!(error.to_string().contains("timed out"), "{error}");
     }
 
     #[test]
@@ -815,6 +1064,7 @@ mod tests {
 
         assert_eq!(invocation.program, "docker");
         assert!(joined.contains("--read-only"));
+        assert!(joined.contains("--init"));
         assert!(joined.contains("--cap-drop=ALL"));
         assert!(joined.contains("--security-opt=no-new-privileges"));
         assert!(joined.contains("--network none"));
@@ -830,6 +1080,93 @@ mod tests {
                 "leaked mount or path: {joined}"
             );
         }
+    }
+
+    #[test]
+    fn linked_worktree_git_pointer_is_mounted_read_only() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("workspace");
+        let git = fixture.path().join("git-common");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&git).unwrap();
+        let git_link = workspace.join(".git");
+        std::fs::write(&git_link, format!("gitdir: {}\n", git.display())).unwrap();
+        let sandbox =
+            DockerSandbox::from_config(&required_container("docker"), &git, &workspace, "git-link")
+                .unwrap()
+                .unwrap();
+        let invocation = sandbox
+            .wrap(
+                &ExecRequest::program("/bin/sh", ["-c", "true"], &workspace),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        let canonical_git_link = std::fs::canonicalize(&git_link).unwrap();
+        let expected = format!(
+            "type=bind,src={},dst={},readonly",
+            canonical_git_link.display(),
+            canonical_git_link.display()
+        );
+
+        assert!(invocation.args.iter().any(|argument| argument == &expected));
+    }
+
+    #[test]
+    fn sandbox_credential_allowlist_is_not_a_global_command_requirement() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("workspace");
+        let git = fixture.path().join("git-common");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&git).unwrap();
+        let mut config = required_container("docker");
+        let ExecutionSandboxConfig::Required { credential_env, .. } = &mut config else {
+            unreachable!()
+        };
+        credential_env.push("ANTHROPIC_API_KEY".into());
+        let sandbox = DockerSandbox::from_config(&config, &git, &workspace, "evaluator")
+            .unwrap()
+            .unwrap();
+
+        let invocation = sandbox
+            .wrap(
+                &ExecRequest::program("/bin/sh", ["-c", "true"], &workspace),
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(!invocation.args.iter().any(|arg| arg == "ANTHROPIC_API_KEY"));
+        assert!(!invocation.env.contains_key("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn command_cannot_request_a_credential_outside_the_sandbox_allowlist() {
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("workspace");
+        let git = fixture.path().join("git-common");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&git).unwrap();
+        let sandbox = DockerSandbox::from_config(
+            &required_container("docker"),
+            &git,
+            &workspace,
+            "policy-violation",
+        )
+        .unwrap()
+        .unwrap();
+        let request = ExecRequest::program("/bin/sh", ["-c", "true"], &workspace)
+            .with_required_credential("CODEX_API_KEY");
+        let error = sandbox
+            .wrap(
+                &request,
+                &BTreeMap::from([("CODEX_API_KEY".into(), "not-forwarded".into())]),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::CredentialPolicyViolation,
+                ..
+            })
+        ));
     }
 
     #[tokio::test]
@@ -848,9 +1185,161 @@ mod tests {
         ));
     }
 
+    #[tokio::test]
+    async fn harness_probe_fails_closed_when_runtime_is_missing() {
+        let error = preflight_sandbox_executable(
+            &required_container("forge-container-runtime-that-does-not-exist"),
+            "claude",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::SandboxUnavailable,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn evaluator_tool_preflight_distinguishes_presence_from_unavailability() {
+        let available = preflight_sandbox_evaluator_tool(
+            &ExecutionSandboxConfig::None,
+            "tests",
+            &EvaluatorToolRequirement::new("git").with_version_contains("git version"),
+        )
+        .await
+        .unwrap();
+        assert!(available.contains("git version"));
+
+        let error = preflight_sandbox_evaluator_tool(
+            &ExecutionSandboxConfig::None,
+            "lint",
+            &EvaluatorToolRequirement::new("forge-tool-that-is-definitely-unavailable"),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::EvaluatorToolUnavailable,
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Docker and a local alpine:3.20 fixture image"]
+    async fn contained_missing_evaluator_tool_fails_closed() {
+        let mut config = required_container("docker");
+        let ExecutionSandboxConfig::Required { image, .. } = &mut config else {
+            unreachable!()
+        };
+        *image = "alpine:3.20".into();
+
+        let error = preflight_sandbox_evaluator_tool(
+            &config,
+            "lint",
+            &EvaluatorToolRequirement::new("cargo-clippy"),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::EvaluatorToolUnavailable,
+                ..
+            })
+        ));
+    }
+
     /// Runs only in the dedicated CI sandbox job or by an operator with the
     /// pinned fixture image already present. It never pulls an image or calls
     /// a provider.
+    #[tokio::test]
+    #[ignore = "requires Docker and a local alpine:3.20 fixture image"]
+    async fn contained_evaluator_without_provider_credentials() {
+        const CREDENTIAL: &str = "FORGE_TEST_PROVIDER_API_KEY";
+        const SECRET: &str = "forge-test-provider-secret-never-log";
+
+        let fixture = tempfile::tempdir().unwrap();
+        let workspace = fixture.path().join("workspace");
+        let git = fixture.path().join("git-common");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&git).unwrap();
+
+        let mut config = required_container("docker");
+        let ExecutionSandboxConfig::Required {
+            image,
+            credential_env,
+            ..
+        } = &mut config
+        else {
+            unreachable!()
+        };
+        *image = "alpine:3.20".into();
+        credential_env.push(CREDENTIAL.into());
+
+        let sandbox = DockerSandbox::from_config(
+            &config,
+            &git,
+            &workspace,
+            "contained-evaluator-credentials",
+        )
+        .unwrap()
+        .unwrap();
+
+        let agent = crate::ProcessRunner::new(EnvPolicy::conservative())
+            .with_sandbox(sandbox.clone())
+            .run(
+                &ExecRequest::program(
+                    "/bin/sh",
+                    [
+                        "-c",
+                        "test \"$FORGE_TEST_PROVIDER_API_KEY\" = \
+                         forge-test-provider-secret-never-log && echo agent-credential-ok",
+                    ],
+                    &workspace,
+                )
+                .with_env(CREDENTIAL, SECRET)
+                .with_required_credential(CREDENTIAL),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+        assert!(agent.success(), "{}", agent.stderr);
+        assert_eq!(agent.stdout.trim(), "agent-credential-ok");
+        assert!(!agent.stdout.contains(SECRET));
+        assert!(!agent.stderr.contains(SECRET));
+
+        let evaluator = crate::ProcessRunner::conservative()
+            .with_sandbox(sandbox.clone())
+            .run(
+                &ExecRequest::program(
+                    "/bin/sh",
+                    [
+                        "-c",
+                        "test -z \"${FORGE_TEST_PROVIDER_API_KEY+x}\" && echo evaluator-clean",
+                    ],
+                    &workspace,
+                ),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+        assert!(evaluator.success(), "{}", evaluator.stderr);
+        assert_eq!(evaluator.stdout.trim(), "evaluator-clean");
+        assert!(!evaluator.stdout.contains(SECRET));
+        assert!(!evaluator.stderr.contains(SECRET));
+        assert!(
+            std::fs::read_dir(&workspace).unwrap().next().is_none(),
+            "credential-bearing command persisted workspace artifacts"
+        );
+
+        sandbox.cleanup().await.unwrap();
+    }
+
     #[tokio::test]
     #[ignore = "requires Docker and a local alpine:3.20 fixture image"]
     async fn docker_adversarial_boundary_blocks_host_secret_escape_and_network() {

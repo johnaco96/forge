@@ -25,7 +25,8 @@ use forge_core::run::{
     SelectionSource, Usage,
 };
 use forge_core::task::{
-    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, NamedCommand, TaskMetadata,
+    BenchmarkSpec, CommandSpec, EngineeringTask, EvaluationSpec, EvaluatorToolRequirement,
+    NamedCommand, TaskMetadata,
 };
 use forge_core::world::{
     Component, EvidenceConfidence, ExtractorIdentity, ExtractorRecord, ExtractorStatus,
@@ -155,6 +156,10 @@ enum Behavior {
     NoOp,
     /// Report having been killed at its timeout.
     TimedOut,
+    /// Leave partial work and report having been killed at its timeout.
+    TimedOutEdit { path: String, contents: String },
+    /// Leave partial work and report operator cancellation.
+    CancelledEdit { path: String, contents: String },
     /// Fail to run at all.
     Unavailable,
     /// Fail during `prepare`, before any workspace exists.
@@ -271,6 +276,17 @@ impl AgentAdapter for FakeAgent {
                 execution.timed_out = true;
                 execution.exit_code = None;
                 execution.status = AgentExecutionStatus::TimedOut;
+            }
+            Behavior::TimedOutEdit { path, contents } => {
+                std::fs::write(ctx.workspace.path.join(path), contents).unwrap();
+                execution.timed_out = true;
+                execution.exit_code = None;
+                execution.status = AgentExecutionStatus::TimedOut;
+            }
+            Behavior::CancelledEdit { path, contents } => {
+                std::fs::write(ctx.workspace.path.join(path), contents).unwrap();
+                execution.exit_code = None;
+                execution.status = AgentExecutionStatus::Cancelled;
             }
             Behavior::Unavailable => {
                 return Err(AgentError::Unavailable {
@@ -391,9 +407,13 @@ async fn a_complete_run_produces_a_patch_an_evaluation_and_a_ledger_entry() {
         "EvaluationStarted",
         "EvaluationCompleted",
         "RunCompleted",
+        "WorkspaceDispositionRecorded",
     ] {
         assert!(types.contains(&required), "missing {required} in {types:?}");
     }
+    assert!(!report.workspace_kept);
+    assert!(report.workspace_path.is_none());
+    assert!(report.run.artifacts.directory.as_ref().unwrap().is_dir());
 }
 
 #[tokio::test]
@@ -625,6 +645,46 @@ async fn an_agent_claiming_success_does_not_make_a_failing_run_pass() {
         report.run.execution.as_ref().unwrap().status,
         AgentExecutionStatus::Completed
     );
+    assert!(report.workspace_kept);
+    assert!(report.workspace_path.as_ref().unwrap().is_dir());
+    assert!(report.run.artifacts.directory.as_ref().unwrap().is_dir());
+    let events = runner.store().events_for(&report.run.run_id).await.unwrap();
+    assert!(events.iter().any(|event| matches!(
+        event.payload,
+        EventPayload::WorkspaceDispositionRecorded {
+            disposition: forge_core::events::WorkspaceDisposition::Kept,
+            ..
+        }
+    )));
+}
+
+#[tokio::test]
+async fn failed_workspace_is_removed_only_when_keep_on_failure_is_disabled() {
+    let mut fixture = Fixture::new();
+    fixture.config.workspaces.keep_on_failure = false;
+    let runner = fixture.runner().await;
+    let agent = edits("value.txt", "999\n");
+
+    let report = runner
+        .execute(
+            RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude"),
+            &agent,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.outcome(), RunOutcome::Failed);
+    assert!(!report.workspace_kept);
+    assert!(report.workspace_path.is_none());
+    assert!(report.run.artifacts.directory.as_ref().unwrap().is_dir());
+    let events = runner.store().events_for(&report.run.run_id).await.unwrap();
+    assert!(events.iter().any(|event| matches!(
+        event.payload,
+        EventPayload::WorkspaceDispositionRecorded {
+            disposition: forge_core::events::WorkspaceDisposition::Removed,
+            ..
+        }
+    )));
 }
 
 #[tokio::test]
@@ -672,6 +732,68 @@ async fn a_timed_out_agent_is_still_judged_on_what_it_left_behind() {
     // It changed nothing, so there is nothing to pass.
     assert_eq!(report.outcome(), RunOutcome::NoChange);
     assert_eq!(report.run.status, RunStatus::Completed);
+}
+
+#[tokio::test]
+async fn a_green_partial_patch_from_a_timed_out_agent_cannot_pass() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let agent = FakeAgent::new(Behavior::TimedOutEdit {
+        path: "value.txt".into(),
+        contents: "2\n".into(),
+    });
+
+    let report = runner
+        .execute(
+            RunRequest::new(task(&[("tests", "grep -q '^2$' value.txt")]), "claude"),
+            &agent,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        report.run.execution.as_ref().unwrap().status,
+        AgentExecutionStatus::TimedOut
+    );
+    assert_eq!(report.outcome(), RunOutcome::Inconclusive);
+}
+
+#[tokio::test]
+async fn operator_cancellation_retains_partial_evidence_without_running_evaluators() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let evaluator_marker = fixture.repo.root().join("evaluator-must-not-run");
+    let agent = FakeAgent::new(Behavior::CancelledEdit {
+        path: "value.txt".into(),
+        contents: "2\n".into(),
+    });
+    let command = format!("touch {}", evaluator_marker.display());
+
+    let report = runner
+        .execute(
+            RunRequest::new(task(&[("tests", &command)]), "claude"),
+            &agent,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(report.run.status, RunStatus::Cancelled);
+    assert_eq!(report.outcome(), RunOutcome::Errored);
+    assert!(
+        report.run.patch.is_some(),
+        "partial patch evidence was lost"
+    );
+    assert!(report.evaluation.is_none());
+    assert!(
+        !evaluator_marker.exists(),
+        "evaluation ran after cancellation"
+    );
+    let events = runner.store().events_for(&report.run.run_id).await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type() == "RunCancelled")
+    );
 }
 
 #[tokio::test]
@@ -1242,6 +1364,40 @@ async fn a_missing_agent_executable_fails_before_anything_is_provisioned() {
 
     assert!(matches!(err, RunnerError::Agent(_)), "{err}");
     // Nothing was recorded: an uninstalled CLI is not evidence about an agent.
+    assert_eq!(runner.store().run_count().await.unwrap(), 0);
+    assert!(!fixture.root().join(".forge/worktrees/R-0001").exists());
+}
+
+#[tokio::test]
+async fn missing_evaluator_prerequisite_fails_closed_before_the_agent_runs() {
+    let fixture = Fixture::new();
+    let runner = fixture.runner().await;
+    let agent = edits("value.txt", "2\n");
+    let mut task = task(&[("tests", "true")]);
+    task.evaluation
+        .tests
+        .as_mut()
+        .unwrap()
+        .required_tools
+        .push(EvaluatorToolRequirement::new(
+            "forge-evaluator-tool-that-does-not-exist",
+        ));
+
+    let error = runner
+        .execute(RunRequest::new(task, "claude"), &agent)
+        .await
+        .expect_err("missing evaluator tool must fail before agent execution");
+
+    assert!(matches!(
+        error,
+        RunnerError::Exec(forge_executor::ExecError::Infrastructure(
+            forge_core::run::InfrastructureFailure {
+                kind: forge_core::run::InfrastructureFailureKind::EvaluatorToolUnavailable,
+                ..
+            }
+        ))
+    ));
+    assert!(agent.prompts().is_empty());
     assert_eq!(runner.store().run_count().await.unwrap(), 0);
     assert!(!fixture.root().join(".forge/worktrees/R-0001").exists());
 }

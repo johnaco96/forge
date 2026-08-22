@@ -24,9 +24,11 @@ Supervised production uses fail-closed containment:
     workspace_limit_bytes = 21474836480
     credential_env = ["CODEX_API_KEY"]
 
-When required mode cannot reach the runtime, image, restricted network, or a
-declared credential, Forge records a typed preflight failure and does not fall
-back to a host process.
+When required mode cannot reach the runtime, image, configured network, or a
+credential explicitly requested for the selected agent invocation, Forge
+records a typed infrastructure failure and does not fall back to a host
+process. The credential list is an allowlist, not a sandbox-wide requirement;
+evaluator commands request none.
 
 ## Enforced container boundary
 
@@ -40,10 +42,20 @@ common directory is mounted read-only so Git inspection works; the primary check
 user home, SSH keys, cloud configuration, Codex/Claude configuration, and
 arbitrary host paths are not mounted.
 
-Credentials are named explicitly in credential_env. The Docker client receives
-only its safe connection environment plus the requested job credentials.
-Inside the container, only declared credentials and a small locale/terminal
-allowlist are injected. Provider output is redacted before persistence.
+Credentials are named explicitly in `credential_env`. Each contained agent
+invocation selects only one supported, present alternative and must request it
+explicitly. The Docker client receives only its safe connection environment
+plus that selected value, and only the named value is injected into the
+container. Claude and Codex production wrappers move authentication into the
+private ephemeral HOME and unset the credential before model-directed tools
+start. Provider output is redacted with the exact invocation value, including
+short values. Evaluators run as separate commands with no provider credential.
+
+Before staging or durable patch capture, Forge scans changed tracked,
+untracked, ignored, binary, symlink, and path-name evidence for exact configured
+credential values. A match is a typed credential-policy violation and forces
+destruction of the disposable workspace, even when failure retention was
+requested.
 
 Network policies are:
 
@@ -53,6 +65,13 @@ Network policies are:
   the operator must enforce egress controls outside Forge.
 - allowed: ordinary Docker bridge access. This is explicit and unsuitable for
   tasks that require restricted egress.
+
+The frozen RC4 production profiles use `allowed` because both provider APIs and
+reproducible evaluator dependency installation require outbound networking.
+Forge does not implement hostname/IP/destination allowlisting. That limitation
+is explicitly accepted for supervised v1.1.0 and remains operator-managed; it
+does not alter the mount, capability, privilege, credential, or host-home
+controls above.
 
 The workspace byte limit is enforced by Forge's active watchdog. Memory OOM is
 read from container state and recorded as MemoryLimitExceeded. CPU is a
@@ -71,6 +90,13 @@ Approved evidence returns through the writable worktree and captured command
 output. Container HOME, temporary files, and layers are ephemeral. No automatic
 merge, policy promotion, or team dispatch is enabled by containment.
 
+Native Codex uses its own `workspace-write` sandbox by default. Required
+production Codex instead uses Forge OCI as the authoritative boundary and the
+CLI's documented externally-contained mode, avoiding a nested Bubblewrap
+namespace that cannot run inside the capability-free container. This is
+reported as `inner sandbox=bypassed, boundary=Forge OCI`; the bypass applies to
+the redundant inner sandbox, not to Forge's outer containment.
+
 ## Verification
 
 Deterministic unit tests inspect every Docker argument and verify no home or
@@ -81,4 +107,4 @@ Claude or Codex usage.
 
 Run locally when Alpine 3.20 is already present:
 
-    cargo test -p forge-executor docker_adversarial -- --ignored --nocapture
+    cargo test -p forge-executor -- --ignored --nocapture

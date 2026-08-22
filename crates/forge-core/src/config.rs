@@ -503,10 +503,24 @@ impl ForgeConfig {
                     "restricted container network requires containment.restricted_network".into(),
                 ));
             }
-            if credential_env.iter().any(|name| name.trim().is_empty()) {
-                return Err(ConfigError::Invalid(
-                    "containment.credential_env contains an empty variable name".into(),
-                ));
+            let mut credential_names = std::collections::BTreeSet::new();
+            for name in credential_env {
+                let mut characters = name.chars();
+                let valid_start = characters
+                    .next()
+                    .is_some_and(|character| character == '_' || character.is_ascii_alphabetic());
+                let valid_rest = characters
+                    .all(|character| character == '_' || character.is_ascii_alphanumeric());
+                if !valid_start || !valid_rest {
+                    return Err(ConfigError::Invalid(format!(
+                        "containment.credential_env entry `{name}` is not a valid environment variable name"
+                    )));
+                }
+                if !credential_names.insert(name) {
+                    return Err(ConfigError::Invalid(format!(
+                        "containment.credential_env contains duplicate variable `{name}`"
+                    )));
+                }
             }
         }
         if self.defaults.timeout_secs == 0 {
@@ -607,6 +621,7 @@ impl ForgeConfig {
              # memory_bytes = 4294967296\n\
              # pids_limit = 256\n\
              # workspace_limit_bytes = 21474836480\n\
+             # Per-command credential allowlist; evaluators request none by default.\n\
              # credential_env = [\"CODEX_API_KEY\"]\n\
              \n\
              [defaults]\n\
@@ -818,6 +833,33 @@ mod tests {
 
         if let ExecutionSandboxConfig::Required { image, .. } = &mut config.containment {
             *image = format!("forge-runtime@sha256:{}", "a".repeat(64));
+        }
+        config.validate().unwrap();
+    }
+
+    #[test]
+    fn production_credential_allowlist_requires_unique_variable_names() {
+        let mut config = ForgeConfig::default_for("forge");
+        config.containment = ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: format!("forge-runtime@sha256:{}", "a".repeat(64)),
+            network: crate::security::NetworkPolicy::Allowed,
+            restricted_network: None,
+            cpu_millis: 2_000,
+            memory_bytes: 1024 * 1024 * 1024,
+            pids_limit: 128,
+            workspace_limit_bytes: 4 * 1024 * 1024 * 1024,
+            credential_env: vec!["CODEX_API_KEY".into(), "CODEX_API_KEY".into()],
+        };
+        assert!(config.validate().is_err());
+
+        if let ExecutionSandboxConfig::Required { credential_env, .. } = &mut config.containment {
+            *credential_env = vec!["CODEX_API_KEY=embedded-value".into()];
+        }
+        assert!(config.validate().is_err());
+
+        if let ExecutionSandboxConfig::Required { credential_env, .. } = &mut config.containment {
+            *credential_env = vec!["CODEX_API_KEY".into(), "_FORGE_OAUTH_TOKEN".into()];
         }
         config.validate().unwrap();
     }

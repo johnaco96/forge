@@ -71,8 +71,21 @@ impl Evaluator for CommandEvaluator {
         Some(&self.spec.command)
     }
 
+    fn required_tools(&self) -> &[forge_core::task::EvaluatorToolRequirement] {
+        &self.spec.required_tools
+    }
+
     async fn evaluate(&self, ctx: &EvalContext<'_>) -> EvalResult<CheckResult> {
         let cwd = ctx.working_dir(self.spec.working_dir.as_deref());
+        for requirement in &self.spec.required_tools {
+            ctx.runner
+                .preflight_evaluator_tool(&cwd, &self.name, requirement, ctx.events)
+                .await?;
+        }
+        // ExecRequest defaults to an empty invocation credential policy. That
+        // default applies to built-in and repository-defined custom
+        // evaluators alike; Forge currently has no separate trusted
+        // credential-bearing evaluator configuration.
         let request = ExecRequest::shell(&self.spec.command, cwd)
             .with_label(format!("{}: {}", self.name, self.spec.command))
             .with_default_timeout(
@@ -83,6 +96,11 @@ impl Evaluator for CommandEvaluator {
             );
 
         let outcome = ctx.runner.run(&request, ctx.events).await?;
+        if outcome.cancelled {
+            return Err(crate::EvalError::Cancelled {
+                check: self.name.clone(),
+            });
+        }
 
         // A timeout is a failure of the change, not of the measurement: a suite
         // that cannot finish inside its budget has not passed. An evaluator
@@ -236,6 +254,59 @@ mod tests {
         assert_eq!(check.verdict, Verdict::Fail);
         assert_eq!(check.exit_code, Some(101));
         assert!(check.detail.unwrap().contains("checkpoint FAILED"));
+    }
+
+    #[tokio::test]
+    async fn a_declared_missing_tool_is_infrastructure_not_engineering_failure() {
+        let ws = TestWorkspace::new();
+        let runner = ProcessRunner::conservative();
+        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let marker = ws.workspace.path.join("agent-must-not-have-produced-this");
+        let mut spec = CommandSpec::new(format!("touch {}", marker.display()));
+        spec.required_tools
+            .push(forge_core::task::EvaluatorToolRequirement::new(
+                "forge-evaluator-tool-that-does-not-exist",
+            ));
+
+        let error = CommandEvaluator::new("lint", spec)
+            .evaluate(&ctx)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            crate::EvalError::Exec(forge_executor::ExecError::Infrastructure(
+                forge_core::run::InfrastructureFailure {
+                    kind: forge_core::run::InfrastructureFailureKind::EvaluatorToolUnavailable,
+                    ..
+                }
+            ))
+        ));
+        assert!(
+            !marker.exists(),
+            "evaluator command ran after failed preflight"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_present_declared_tool_allows_normal_engineering_evidence() {
+        let ws = TestWorkspace::new();
+        let runner = ProcessRunner::conservative();
+        let ctx = EvalContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let mut spec = CommandSpec::new("exit 7");
+        spec.required_tools.push(
+            forge_core::task::EvaluatorToolRequirement::new("git")
+                .with_version_contains("git version"),
+        );
+
+        let check = CommandEvaluator::new("tests", spec)
+            .evaluate(&ctx)
+            .await
+            .unwrap();
+        assert_eq!(check.verdict, Verdict::Fail);
+        assert_eq!(check.execution_status, EvaluatorExecutionStatus::Completed);
+        assert_eq!(check.exit_code, Some(7));
+        assert!(check.infrastructure_failures.is_empty());
     }
 
     #[tokio::test]

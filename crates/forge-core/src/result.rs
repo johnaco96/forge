@@ -69,6 +69,7 @@ pub enum EvaluatorExecutionStatus {
     #[default]
     Completed,
     Error,
+    Cancelled,
 }
 
 impl EvaluatorExecutionStatus {
@@ -76,6 +77,7 @@ impl EvaluatorExecutionStatus {
         match self {
             Self::Completed => "completed",
             Self::Error => "error",
+            Self::Cancelled => "cancelled",
         }
     }
 }

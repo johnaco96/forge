@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+# Version probing must never require or consume a credential.
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+    exec codex --version
+fi
+
+: "${CODEX_API_KEY:?Forge did not inject the required invocation-scoped CODEX_API_KEY}"
+
+# Codex 0.147's non-interactive login is performed only in the fresh
+# container-private HOME. The environment value is removed before Codex starts,
+# so its shell tools cannot inherit it. The entire HOME is destroyed with the
+# mandatory per-command container cleanup.
+umask 077
+printf '%s' "$CODEX_API_KEY" | codex login --with-api-key >/dev/null
+unset CODEX_API_KEY
+chmod -R go-rwx "$HOME/.codex"
+exec codex "$@"

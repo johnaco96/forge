@@ -441,12 +441,26 @@ fn print_report(
 
 fn print_agent_execution(report: &RunReport) {
     println!("\nAgent execution");
+    let mut rows = vec![
+        (
+            "Provenance",
+            report.run.execution_provenance.as_str().to_string(),
+        ),
+        ("Configuration", report.run.agent.fingerprint()),
+    ];
+    if let Some(version) = &report.run.agent.harness_version {
+        rows.push(("Harness version", version.clone()));
+    }
+    if let Some(model) = &report.run.agent.model {
+        rows.push(("Model", model.clone()));
+    }
     let Some(execution) = &report.run.execution else {
-        println!("  did not run");
+        rows.push(("Status", "did not run".into()));
+        println!("{}", output::fields(&rows));
         return;
     };
 
-    let mut rows = vec![
+    rows.extend([
         ("Status", execution.status.describe().to_string()),
         (
             "Duration",
@@ -454,7 +468,7 @@ fn print_agent_execution(report: &RunReport) {
                 execution.duration_ms as i64,
             )),
         ),
-    ];
+    ]);
     if let Some(code) = execution.exit_code {
         rows.push(("Exit code", code.to_string()));
     }

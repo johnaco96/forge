@@ -117,6 +117,15 @@ impl From<TeamExecutionId> for EvaluationSubject {
     }
 }
 
+/// The observed disposition of a run workspace after durable evidence capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceDisposition {
+    Kept,
+    Removed,
+    CleanupFailed,
+}
+
 /// The event kinds Forge records, with their payloads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event_type", content = "data")]
@@ -130,6 +139,11 @@ pub enum EventPayload {
         path: PathBuf,
         branch: String,
         base_commit: String,
+    },
+    WorkspaceDispositionRecorded {
+        path: PathBuf,
+        disposition: WorkspaceDisposition,
+        detail: String,
     },
     SandboxPrepared {
         boundary: String,
@@ -259,6 +273,7 @@ impl EventPayload {
         match self {
             Self::RunStarted { .. } => "RunStarted",
             Self::WorkspaceCreated { .. } => "WorkspaceCreated",
+            Self::WorkspaceDispositionRecorded { .. } => "WorkspaceDispositionRecorded",
             Self::SandboxPrepared { .. } => "SandboxPrepared",
             Self::SandboxCleaned => "SandboxCleaned",
             Self::InfrastructureFailureObserved { .. } => "InfrastructureFailureObserved",
@@ -471,6 +486,11 @@ mod tests {
                 path: PathBuf::from("/tmp/ws"),
                 branch: "forge/run-1".into(),
                 base_commit: "a73cf21".into(),
+            },
+            EventPayload::WorkspaceDispositionRecorded {
+                path: PathBuf::from("/tmp/ws"),
+                disposition: WorkspaceDisposition::Removed,
+                detail: "successful run workspace removed after evidence capture".into(),
             },
             EventPayload::SandboxPrepared {
                 boundary: "Docker-compatible OCI".into(),

@@ -24,4 +24,4 @@ pub use builtins::{
 pub use command::CommandEvaluator;
 pub use error::{EvalError, EvalResult};
 pub use evaluator::{EvalContext, EvaluationContext, Evaluator};
-pub use set::{EvaluationEngine, EvaluationPlan, EvaluatorSet};
+pub use set::{EvaluationEngine, EvaluationPlan, EvaluatorPrerequisite, EvaluatorSet};

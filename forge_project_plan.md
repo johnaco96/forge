@@ -1,8 +1,21 @@
 # Forge
 ## A Longitudinal Control Plane for Autonomous Software Engineering
 
-**Status:** Project design / implementation-ready  
+**Status:** Historical design plan; Phases 0–8 are implemented
 **Primary goal:** Build an AI-native engineering control plane that can run coding agents, independently evaluate their work, retain structured experience over time, and learn which agent/configuration performs best for different engineering tasks.
+
+> Historical context (updated 2026-08-22): this document records the design
+> sequence that guided Forge's implementation. It is not the current execution
+> plan, and instructions below such as “start with” or “do not begin” describe
+> the original roadmap. Phases 0–8 now exist in the product. Current v1.1.0
+> release status and remaining gates are maintained in
+> `docs/production-readiness.md` and `docs/releases/v1.1.0.md`.
+>
+> Release closure (2026-08-22): the RC4 product is locally ready for supervised
+> production under an explicit human waiver after 7/7 executed pilot tasks
+> passed and two frozen tasks were not attempted. The original nine-outcome
+> gate remains not fully satisfied. GitHub CI/CD and publication are external,
+> and autonomous production is not authorized.
 
 ---
 
@@ -1949,9 +1962,13 @@ Forge is intended to become the system that answers those questions.
 
 ---
 
-## Current Recommended Starting Point
+## Historical Recommended Starting Point
 
 **Phase 0.5: Evaluation Hardening**
+
+This was the recommendation when the design plan was written. Phase 0.5 and
+the subsequent Phase 0–8 roadmap are now implemented; this section is retained
+to explain the sequencing and trust requirements that shaped the product.
 
 Phase 0's vertical slice is complete. Before adding a second agent, require:
 

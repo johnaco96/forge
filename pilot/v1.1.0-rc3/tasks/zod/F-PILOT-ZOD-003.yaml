@@ -1,0 +1,28 @@
+task_id: F-PILOT-ZOD-003
+repository: zod
+objective: >-
+  Resolve nested local JSON Pointer references in fromJSONSchema, including
+  escaped ~0 and ~1 path segments and valid array indices. Missing or external
+  references must still fail clearly, and recursive local schemas must remain
+  supported.
+constraints:
+  - Follow AGENTS.md and use the existing from-json-schema test file
+  - Evaluate runtime, memory, and bundle-size impact in the terminal report
+  - Do not bump versions or add dependencies
+protected_paths: ["pnpm-lock.yaml", "LICENSE", ".github/**", "AGENTS.md"]
+evaluation:
+  tests:
+    command: "pnpm install --frozen-lockfile --ignore-scripts --store-dir .pnpm-store && pnpm vitest run packages/zod/src/v4/classic/tests/from-json-schema.test.ts"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: node, version_contains: "v24." }
+      - { executable: pnpm, version_contains: "10.12.1" }
+  lint:
+    command: "pnpm install --frozen-lockfile --ignore-scripts --store-dir .pnpm-store && pnpm biome check packages/zod/src/v4/classic/from-json-schema.ts packages/zod/src/v4/classic/tests/from-json-schema.test.ts"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: node, version_contains: "v24." }
+      - { executable: pnpm, version_contains: "10.12.1" }
+classification: { category: correctness, language: typescript, domain: json-schema, difficulty: hard }
+components: ["packages/zod/src/v4/classic/from-json-schema.ts"]
+tags: ["pilot-v1.1.0-rc", "json-pointer"]

@@ -3,8 +3,9 @@
 //! The patch is the agent's real output. Everything else it says about its work
 //! is a claim; the diff is evidence.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path};
 
 use forge_core::patch::{CandidatePatch, ChangeKind, DeltaEntry, PatchPolicy, WorkspaceDelta};
@@ -56,13 +57,23 @@ pub fn parse_numstat(output: &str) -> DiffStat {
 
 /// Diff statistics between two revisions.
 pub fn stat_between(dir: impl AsRef<Path>, base: &str, head: &str) -> GitResult<DiffStat> {
-    let output = run_git(dir, ["diff", "--numstat", base, head])?;
+    let output = run_git(
+        dir,
+        [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--numstat",
+            base,
+            head,
+        ],
+    )?;
     Ok(parse_numstat(&output))
 }
 
 /// Unified diff between two revisions.
 pub fn patch_between(dir: impl AsRef<Path>, base: &str, head: &str) -> GitResult<String> {
-    run_git(dir, ["diff", base, head])
+    run_git(dir, ["diff", "--no-ext-diff", "--no-textconv", base, head])
 }
 
 /// Everything a workspace changed relative to `base`, committed or not.
@@ -99,12 +110,14 @@ pub fn capture_workspace_patch(
 /// are collected separately as policy evidence; they are never staged.
 pub fn workspace_delta(workspace: impl AsRef<Path>, base: &str) -> GitResult<WorkspaceDelta> {
     let workspace = workspace.as_ref();
-    run_git(workspace, ["add", "-A"])?;
+    add_all_without_external_filters(workspace)?;
 
     let statuses = run_git(
         workspace,
         [
             "diff",
+            "--no-ext-diff",
+            "--no-textconv",
             "--cached",
             "--name-status",
             "-z",
@@ -112,7 +125,18 @@ pub fn workspace_delta(workspace: impl AsRef<Path>, base: &str) -> GitResult<Wor
             base,
         ],
     )?;
-    let numstat = run_git(workspace, ["diff", "--cached", "--numstat", "-z", base])?;
+    let numstat = run_git(
+        workspace,
+        [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            "--numstat",
+            "-z",
+            base,
+        ],
+    )?;
     let counts = parse_numstat_entries(&numstat)?;
 
     let mut entries = Vec::new();
@@ -160,6 +184,160 @@ pub fn workspace_delta(workspace: impl AsRef<Path>, base: &str) -> GitResult<Wor
 
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(WorkspaceDelta::new(entries))
+}
+
+/// Returns whether any changed workspace path or content contains an exact
+/// invocation secret.
+///
+/// This runs before staging or durable patch capture. It includes tracked,
+/// untracked, and ignored paths, does not execute repository-defined filters,
+/// and never returns the matching value or path. Callers can therefore destroy
+/// a contaminated disposable workspace without putting the credential in a
+/// branch, patch, event, or diagnostic.
+pub fn workspace_contains_secret(
+    workspace: impl AsRef<Path>,
+    base: &str,
+    secrets: &[String],
+) -> GitResult<bool> {
+    let secrets = secrets
+        .iter()
+        .map(String::as_bytes)
+        .filter(|secret| !secret.is_empty())
+        .collect::<Vec<_>>();
+    if secrets.is_empty() {
+        return Ok(false);
+    }
+
+    let workspace = workspace.as_ref();
+    let mut paths = BTreeSet::new();
+    for listed in [
+        run_git(
+            workspace,
+            [
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "-z",
+                base,
+                "--",
+            ],
+        )?,
+        run_git(
+            workspace,
+            ["ls-files", "--others", "--exclude-standard", "-z", "--"],
+        )?,
+        run_git(
+            workspace,
+            [
+                "ls-files",
+                "--others",
+                "--ignored",
+                "--exclude-standard",
+                "-z",
+                "--",
+            ],
+        )?,
+    ] {
+        for path in listed.split_terminator('\0') {
+            validate_git_path(path)?;
+            if contains_any_secret(path.as_bytes(), &secrets) {
+                return Ok(true);
+            }
+            paths.insert(path.to_string());
+        }
+    }
+
+    for path in paths {
+        if path_contains_secret(&workspace.join(path), &secrets)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn path_contains_secret(path: &Path, secrets: &[&[u8]]) -> GitResult<bool> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(crate::error::GitError::Io {
+                context: "inspecting a candidate path for credential contamination".into(),
+                source,
+            });
+        }
+    };
+
+    if metadata.file_type().is_symlink() {
+        let target = fs::read_link(path).map_err(|source| crate::error::GitError::Io {
+            context: "reading a candidate symlink for credential contamination".into(),
+            source,
+        })?;
+        return Ok(contains_any_secret(
+            target.to_string_lossy().as_bytes(),
+            secrets,
+        ));
+    }
+    if metadata.is_dir() {
+        let entries = fs::read_dir(path).map_err(|source| crate::error::GitError::Io {
+            context: "reading a candidate directory for credential contamination".into(),
+            source,
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|source| crate::error::GitError::Io {
+                context: "reading a candidate directory entry for credential contamination".into(),
+                source,
+            })?;
+            if contains_any_secret(entry.file_name().to_string_lossy().as_bytes(), secrets)
+                || path_contains_secret(&entry.path(), secrets)?
+            {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
+    }
+    if !metadata.is_file() {
+        return Ok(false);
+    }
+
+    let mut file = fs::File::open(path).map_err(|source| crate::error::GitError::Io {
+        context: "opening a candidate file for credential contamination".into(),
+        source,
+    })?;
+    let overlap = secrets
+        .iter()
+        .map(|secret| secret.len().saturating_sub(1))
+        .max()
+        .unwrap_or(0);
+    let mut carry = Vec::new();
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let read = file
+            .read(&mut chunk)
+            .map_err(|source| crate::error::GitError::Io {
+                context: "reading a candidate file for credential contamination".into(),
+                source,
+            })?;
+        if read == 0 {
+            break;
+        }
+        carry.extend_from_slice(&chunk[..read]);
+        if contains_any_secret(&carry, secrets) {
+            return Ok(true);
+        }
+        if carry.len() > overlap {
+            carry.drain(..carry.len() - overlap);
+        }
+    }
+    Ok(false)
+}
+
+fn contains_any_secret(haystack: &[u8], secrets: &[&[u8]]) -> bool {
+    secrets.iter().any(|secret| {
+        haystack
+            .windows(secret.len())
+            .any(|window| window == *secret)
+    })
 }
 
 type LineCounts = (u64, u64, bool);
@@ -220,6 +398,112 @@ fn validate_git_path(path: &str) -> GitResult<()> {
 const MAX_RESET_ARG_BYTES: usize = 96 * 1024;
 /// Independent ceiling on argument count, for platforms that limit that instead.
 const MAX_RESET_ARG_COUNT: usize = 1_000;
+/// A repository needing more filter drivers is either corrupt or deliberately
+/// trying to exhaust the trusted capture command line. Normal repositories use
+/// zero or a handful (for example Git LFS).
+const MAX_FILTER_DRIVERS: usize = 128;
+
+/// Stages the complete workspace while neutralizing repository-defined clean
+/// filter processes.
+///
+/// `git add` normally executes `filter.<driver>.clean` or long-running process
+/// filters from repository configuration. Because `.gitattributes` is
+/// candidate-controlled, doing that on the host after an agent run would turn
+/// evidence capture into a sandbox escape. Resolve every effective filter name
+/// first, override its executable commands to the empty passthrough, and only
+/// then stage. The shared Git runner separately disables hooks and fsmonitor.
+fn add_all_without_external_filters(workspace: &Path) -> GitResult<()> {
+    let listed = run_git(
+        workspace,
+        [
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "-z",
+        ],
+    )?;
+    let paths = listed.split_terminator('\0').collect::<Vec<_>>();
+    for path in &paths {
+        validate_git_path(path)?;
+    }
+
+    let mut drivers = BTreeSet::new();
+    for batch in argument_batches(&paths) {
+        let mut args = vec![
+            "check-attr".to_string(),
+            "-z".to_string(),
+            "filter".to_string(),
+            "--".to_string(),
+        ];
+        args.extend(batch.iter().map(|path| (*path).to_string()));
+        let attributes = run_git(workspace, args)?;
+        let mut fields = attributes.split_terminator('\0');
+        while let (Some(path), Some(attribute), Some(value)) =
+            (fields.next(), fields.next(), fields.next())
+        {
+            validate_git_path(path)?;
+            if attribute != "filter" || matches!(value, "unspecified" | "unset") {
+                continue;
+            }
+            if value.is_empty()
+                || !value
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
+            {
+                return Err(crate::error::GitError::UnsafePath {
+                    path: Path::new(".gitattributes").to_path_buf(),
+                    reason: format!("candidate selected invalid Git filter driver `{value}`"),
+                });
+            }
+            drivers.insert(value.to_string());
+            if drivers.len() > MAX_FILTER_DRIVERS {
+                return Err(crate::error::GitError::UnsafePath {
+                    path: Path::new(".gitattributes").to_path_buf(),
+                    reason: format!(
+                        "candidate selected more than {MAX_FILTER_DRIVERS} Git filter drivers"
+                    ),
+                });
+            }
+        }
+    }
+
+    let mut args = Vec::new();
+    for driver in drivers {
+        args.extend([
+            "-c".to_string(),
+            format!("filter.{driver}.process="),
+            "-c".to_string(),
+            format!("filter.{driver}.clean="),
+            "-c".to_string(),
+            format!("filter.{driver}.required=false"),
+        ]);
+    }
+    args.extend(["add".to_string(), "-A".to_string(), "--".to_string()]);
+    run_git(workspace, args)?;
+    Ok(())
+}
+
+fn argument_batches<'a>(paths: &'a [&'a str]) -> Vec<Vec<&'a str>> {
+    let mut batches = Vec::new();
+    let mut batch = Vec::new();
+    let mut bytes = 0;
+    for path in paths {
+        let len = path.len() + 1;
+        if !batch.is_empty()
+            && (bytes + len > MAX_RESET_ARG_BYTES || batch.len() >= MAX_RESET_ARG_COUNT)
+        {
+            batches.push(std::mem::take(&mut batch));
+            bytes = 0;
+        }
+        batch.push(*path);
+        bytes += len;
+    }
+    if !batch.is_empty() {
+        batches.push(batch);
+    }
+    batches
+}
 
 /// Leaves only policy-approved changes in the workspace index.
 ///
@@ -282,7 +566,10 @@ fn reset_batches(excluded: &[forge_core::patch::ExcludedEntry]) -> Vec<Vec<&str>
 
 /// Unified diff for the currently staged candidate.
 pub fn cached_patch(workspace: impl AsRef<Path>, base: &str) -> GitResult<String> {
-    run_git(workspace, ["diff", "--cached", base])
+    run_git(
+        workspace,
+        ["diff", "--no-ext-diff", "--no-textconv", "--cached", base],
+    )
 }
 
 /// Commits the index exactly as policy prepared it, without restaging the
@@ -296,7 +583,18 @@ pub fn commit_staged_workspace(
     message: &str,
 ) -> GitResult<Option<String>> {
     let workspace = workspace.as_ref();
-    let has_candidate = run_git(workspace, ["diff", "--cached", "--quiet", base]).is_err();
+    let has_candidate = run_git(
+        workspace,
+        [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            "--quiet",
+            base,
+        ],
+    )
+    .is_err();
     if !has_candidate {
         // An agent may have committed excluded content. Move the durable run
         // branch back to the base tree so that content is not retained in its
@@ -343,10 +641,20 @@ pub fn commit_staged_workspace(
 /// are never attributed to the operator.
 pub fn commit_workspace(workspace: impl AsRef<Path>, message: &str) -> GitResult<Option<String>> {
     let workspace = workspace.as_ref();
-    run_git(workspace, ["add", "-A"])?;
+    add_all_without_external_filters(workspace)?;
 
     // `diff --cached --quiet` exits 1 when something is staged.
-    let has_staged = run_git(workspace, ["diff", "--cached", "--quiet"]).is_err();
+    let has_staged = run_git(
+        workspace,
+        [
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--cached",
+            "--quiet",
+        ],
+    )
+    .is_err();
     if !has_staged {
         return Ok(None);
     }
@@ -489,6 +797,134 @@ mod tests {
         assert_eq!(stat.files_changed, 2);
         assert_eq!(stat.insertions, 2);
         assert!(patch.contains("new.rs"), "{patch}");
+    }
+
+    #[test]
+    fn credential_scan_covers_tracked_untracked_and_ignored_candidate_bytes() {
+        let repo = TestRepo::new();
+        let (_manager, worktree) = workspace(&repo);
+        let secret = "short-secret".to_string();
+
+        std::fs::write(
+            worktree.path().join("README.md"),
+            format!("# test repo\n{secret}\n"),
+        )
+        .unwrap();
+        assert!(
+            workspace_contains_secret(
+                worktree.path(),
+                worktree.base_commit(),
+                std::slice::from_ref(&secret),
+            )
+            .unwrap()
+        );
+
+        std::fs::write(worktree.path().join("README.md"), "# test repo\n").unwrap();
+        std::fs::write(
+            worktree.path().join("untracked.txt"),
+            format!("prefix-{secret}-suffix"),
+        )
+        .unwrap();
+        assert!(
+            workspace_contains_secret(
+                worktree.path(),
+                worktree.base_commit(),
+                std::slice::from_ref(&secret),
+            )
+            .unwrap()
+        );
+
+        std::fs::remove_file(worktree.path().join("untracked.txt")).unwrap();
+        std::fs::write(worktree.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::create_dir(worktree.path().join("ignored")).unwrap();
+        std::fs::write(
+            worktree.path().join("ignored/evidence.bin"),
+            [vec![b'x'; 65_535], secret.as_bytes().to_vec()].concat(),
+        )
+        .unwrap();
+        assert!(
+            workspace_contains_secret(worktree.path(), worktree.base_commit(), &[secret]).unwrap()
+        );
+    }
+
+    #[test]
+    fn credential_scan_covers_candidate_path_names_without_staging() {
+        let repo = TestRepo::new();
+        let (_manager, worktree) = workspace(&repo);
+        let secret = "credential-in-path".to_string();
+        std::fs::write(
+            worktree.path().join(format!("result-{secret}.txt")),
+            "safe bytes",
+        )
+        .unwrap();
+
+        assert!(
+            workspace_contains_secret(worktree.path(), worktree.base_commit(), &[secret]).unwrap()
+        );
+        assert!(
+            worktree
+                .git(["diff", "--cached", "--quiet", worktree.base_commit()])
+                .is_ok(),
+            "the pre-capture scan must not stage candidate files"
+        );
+    }
+
+    #[test]
+    fn credential_scan_does_not_report_unrelated_candidate_bytes() {
+        let repo = TestRepo::new();
+        let (_manager, worktree) = workspace(&repo);
+        std::fs::write(
+            worktree.path().join("safe.txt"),
+            "ordinary candidate output",
+        )
+        .unwrap();
+
+        assert!(
+            !workspace_contains_secret(
+                worktree.path(),
+                worktree.base_commit(),
+                &["not-present".into()]
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn candidate_clean_filters_are_neutralized_during_host_capture() {
+        let repo = TestRepo::new();
+        let (_manager, worktree) = workspace(&repo);
+        let escaped = repo.path().join("host-filter-escape-marker");
+        worktree
+            .git([
+                "config",
+                "filter.candidate.clean",
+                &format!("touch '{}'; cat", escaped.display()),
+            ])
+            .unwrap();
+        worktree
+            .git(["config", "filter.candidate.required", "true"])
+            .unwrap();
+        std::fs::write(
+            worktree.path().join(".gitattributes"),
+            "*.txt filter=candidate\n",
+        )
+        .unwrap();
+        std::fs::write(worktree.path().join("payload.txt"), "raw candidate bytes\n").unwrap();
+
+        let delta = workspace_delta(worktree.path(), worktree.base_commit()).unwrap();
+        assert!(
+            !escaped.exists(),
+            "candidate-controlled clean filter executed on the host"
+        );
+        assert!(
+            delta
+                .entries
+                .iter()
+                .any(|entry| entry.path == "payload.txt"),
+            "candidate file was not captured"
+        );
+        let patch = cached_patch(worktree.path(), worktree.base_commit()).unwrap();
+        assert!(patch.contains("raw candidate bytes"), "{patch}");
     }
 
     #[test]

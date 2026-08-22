@@ -15,11 +15,11 @@ pub mod sandbox;
 pub mod workspace;
 
 pub use error::{ExecError, ExecResult};
-pub use process::{ExecOutcome, ExecRequest, ProcessRunner, find_executable};
+pub use process::{CredentialPolicy, ExecOutcome, ExecRequest, ProcessRunner, find_executable};
 pub use resource::{DiskCapacity, DiskPreflightPolicy, DiskWatch, capacity, preflight_disk};
 pub use sandbox::{
     DockerSandbox, EnvPolicy, ExecutionSandbox, Redactor, SandboxedInvocation,
-    preflight_sandbox_config,
+    preflight_sandbox_config, preflight_sandbox_evaluator_tool, preflight_sandbox_executable,
 };
 pub use workspace::{
     PatchCapture, RETAINED_IGNORED_EXCLUSIONS, WorkspaceProvider, WorktreeProvider,

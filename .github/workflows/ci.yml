@@ -45,5 +45,5 @@ jobs:
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.93.0 --profile minimal && rustup default 1.93.0
       - run: docker pull alpine:3.20
-      - name: OCI adversarial fixtures
-        run: cargo test -p forge-executor docker_adversarial -- --ignored --nocapture
+      - name: OCI adversarial and credential-boundary fixtures
+        run: cargo test -p forge-executor -- --ignored --nocapture

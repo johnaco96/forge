@@ -27,12 +27,21 @@ use forge_core::security::ExecutionSandboxConfig;
 use forge_executor::{EnvPolicy, ExecRequest, ProcessRunner, find_executable};
 use serde::Deserialize;
 
-use crate::adapter::{AgentAdapter, RunContext};
+use crate::adapter::{AgentAdapter, RunContext, contained_agent_credentials};
 use crate::error::{AgentError, AgentResult};
 use crate::prompt::build_agent_prompt_with_context;
 
 /// Executable Forge looks for when none is configured.
 pub const DEFAULT_EXECUTABLE: &str = "claude";
+/// Credential-isolating wrapper required inside Forge's production OCI image.
+pub const CONTAINED_EXECUTABLE: &str = "claude-forge";
+
+/// Fingerprinted adapter protocol selected by the runner for Claude runs.
+pub const EXECUTION_PROTOCOL_SETTING: &str = "forge.claude.execution_protocol";
+/// Native development execution protocol.
+pub const NATIVE_EXECUTION_PROTOCOL: &str = "claude-native-v1";
+/// Production protocol: Forge OCI, bare Claude, and a one-shot key helper.
+pub const OUTER_OCI_EXECUTION_PROTOCOL: &str = "forge-oci-bare-one-shot-api-key-helper-v1";
 
 /// Permission mode used when none is configured.
 ///
@@ -50,6 +59,37 @@ const CREDENTIAL_VARS: &[&str] = &[
     "ANTHROPIC_AUTH_TOKEN",
     "CLAUDE_CODE_OAUTH_TOKEN",
 ];
+/// The production wrapper deliberately supports only a direct API key. OAuth
+/// and bearer-token login cannot use the wrapper's one-shot apiKeyHelper path.
+const CONTAINED_CREDENTIAL_VARS: &[&str] = &["ANTHROPIC_API_KEY"];
+
+const PERMISSION_MODES: &[&str] = &[
+    "acceptEdits",
+    "bypassPermissions",
+    "default",
+    "delegate",
+    "dontAsk",
+    "plan",
+];
+
+/// Flags whose meaning is part of Forge's recorded transport or containment
+/// protocol and therefore cannot be overridden through opaque extra arguments.
+const RESERVED_EXTRA_ARGS: &[&str] = &[
+    "--add-dir",
+    "--allow-dangerously-skip-permissions",
+    "--bare",
+    "--cwd",
+    "--dangerously-skip-permissions",
+    "--model",
+    "--no-session-persistence",
+    "--output-format",
+    "--permission-mode",
+    "--permission-prompt-tool",
+    "--print",
+    "--setting-sources",
+    "--settings",
+    "-p",
+];
 
 /// Variables that would tell the child it is nested inside another session.
 const NESTED_SESSION_VARS: &[&str] = &[
@@ -66,6 +106,7 @@ pub struct ClaudeAdapter {
     permission_mode: String,
     extra_args: Vec<String>,
     containerized: bool,
+    contained_credential_configured: bool,
 }
 
 impl ClaudeAdapter {
@@ -76,6 +117,7 @@ impl ClaudeAdapter {
             permission_mode: DEFAULT_PERMISSION_MODE.to_string(),
             extra_args: Vec::new(),
             containerized: false,
+            contained_credential_configured: false,
         }
     }
 
@@ -104,6 +146,13 @@ impl ClaudeAdapter {
                 })
                 .unwrap_or_default(),
             containerized: matches!(config.sandbox, ExecutionSandboxConfig::Required { .. }),
+            contained_credential_configured: matches!(
+                &config.sandbox,
+                ExecutionSandboxConfig::Required { credential_env, .. }
+                    if CONTAINED_CREDENTIAL_VARS
+                        .iter()
+                        .any(|name| credential_env.iter().any(|allowed| allowed == name))
+            ),
         }
     }
 
@@ -157,13 +206,88 @@ impl ClaudeAdapter {
     /// Claude Code session.
     fn env_policy(&self) -> EnvPolicy {
         let mut policy = EnvPolicy::inherit_non_secrets();
-        for var in CREDENTIAL_VARS {
+        let credential_vars = if self.containerized {
+            CONTAINED_CREDENTIAL_VARS
+        } else {
+            CREDENTIAL_VARS
+        };
+        for var in credential_vars {
             policy = policy.allow_var(*var);
         }
         for var in NESTED_SESSION_VARS {
             policy = policy.deny_var(*var);
         }
         policy
+    }
+
+    fn validate_config(&self) -> AgentResult<()> {
+        if !PERMISSION_MODES.contains(&self.permission_mode.as_str()) {
+            return Err(AgentError::Unavailable {
+                agent: "claude".into(),
+                reason: format!(
+                    "unknown permission_mode `{}`; expected one of {}",
+                    self.permission_mode,
+                    PERMISSION_MODES.join(", ")
+                ),
+            });
+        }
+        if let Some(argument) = self.extra_args.iter().find(|argument| {
+            RESERVED_EXTRA_ARGS.iter().any(|reserved| {
+                argument.as_str() == *reserved
+                    || argument
+                        .strip_prefix(reserved)
+                        .is_some_and(|suffix| suffix.starts_with('='))
+            })
+        }) {
+            return Err(AgentError::Unavailable {
+                agent: "claude".into(),
+                reason: format!(
+                    "extra_args contains reserved transport/security flag `{argument}`; use the matching `[agents.claude]` setting instead"
+                ),
+            });
+        }
+        if self.containerized && self.executable != CONTAINED_EXECUTABLE {
+            return Err(AgentError::Unavailable {
+                agent: "claude".into(),
+                reason: format!(
+                    "contained production execution requires credential-isolating executable `{CONTAINED_EXECUTABLE}`"
+                ),
+            });
+        }
+        if self.containerized && !self.contained_credential_configured {
+            return Err(AgentError::Unavailable {
+                agent: "claude".into(),
+                reason: "contained production execution requires ANTHROPIC_API_KEY in containment.credential_env; OAuth and bearer-token login are not accepted by the one-shot helper protocol".into(),
+            });
+        }
+        Ok(())
+    }
+
+    fn invocation_metadata(&self) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            (
+                "claude.execution_boundary".into(),
+                if self.containerized {
+                    OUTER_OCI_EXECUTION_PROTOCOL
+                } else {
+                    NATIVE_EXECUTION_PROTOCOL
+                }
+                .into(),
+            ),
+            (
+                "claude.customization_mode".into(),
+                if self.containerized { "bare" } else { "native" }.into(),
+            ),
+            (
+                "claude.credential_isolation".into(),
+                if self.containerized {
+                    "one-shot-api-key-helper-v1"
+                } else {
+                    "native-environment"
+                }
+                .into(),
+            ),
+        ])
     }
 
     /// A short description of the invocation, for the event stream.
@@ -224,6 +348,7 @@ impl AgentAdapter for ClaudeAdapter {
     }
 
     async fn prepare(&self) -> AgentResult<()> {
+        self.validate_config()?;
         if self.containerized {
             return Ok(());
         }
@@ -235,6 +360,7 @@ impl AgentAdapter for ClaudeAdapter {
     }
 
     async fn execute(&self, ctx: &RunContext<'_>) -> AgentResult<AgentExecution> {
+        self.validate_config()?;
         let started_at = Utc::now();
         let prompt = build_agent_prompt_with_context(ctx.task, ctx.workspace, ctx.world_model);
 
@@ -258,6 +384,14 @@ impl AgentAdapter for ClaudeAdapter {
         let mut request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
             .with_label(label)
             .with_default_timeout(ctx.timeout);
+        request = request.with_required_credentials(contained_agent_credentials(
+            &ctx.config.sandbox,
+            if self.containerized {
+                CONTAINED_CREDENTIAL_VARS
+            } else {
+                CREDENTIAL_VARS
+            },
+        ));
         if let Some(watch) = &ctx.disk_watch {
             request = request.with_disk_watch(watch.clone());
         }
@@ -269,31 +403,36 @@ impl AgentAdapter for ClaudeAdapter {
         let stdout_path = write_artifact(&ctx.artifacts_dir, "agent.stdout.log", &outcome.stdout);
         let stderr_path = write_artifact(&ctx.artifacts_dir, "agent.stderr.log", &outcome.stderr);
 
-        let status = if outcome.infrastructure_failures.is_empty() {
+        let status = if outcome.cancelled {
+            forge_core::run::AgentExecutionStatus::Cancelled
+        } else if outcome.infrastructure_failures.is_empty() {
             AgentExecution::classify(outcome.exit_code, outcome.timed_out)
         } else {
             forge_core::run::AgentExecutionStatus::Cancelled
         };
         let report = ClaudeResult::parse(&outcome.stdout);
 
-        let execution =
-            AgentExecution {
-                status,
-                exit_code: outcome.exit_code,
-                timed_out: outcome.timed_out,
-                started_at,
-                finished_at: Utc::now(),
-                duration_ms: outcome.duration_ms(),
-                stdout_path: stdout_path.clone(),
-                stderr_path: stderr_path.clone(),
-                usage: report.as_ref().map(ClaudeResult::usage).unwrap_or_default(),
-                // Recorded as trajectory data. Nothing downstream reads it.
-                self_report: report.as_ref().and_then(|r| r.result.clone()),
-                harness_metadata: report.as_ref().map(ClaudeResult::metadata).unwrap_or_else(
-                    || BTreeMap::from([("claude.result_json".to_string(), "unparsed".to_string())]),
-                ),
-                infrastructure_failures: outcome.infrastructure_failures.clone(),
-            };
+        let mut metadata = self.invocation_metadata();
+        if let Some(report) = &report {
+            metadata.extend(report.metadata());
+        } else {
+            metadata.insert("claude.result_json".to_string(), "unparsed".to_string());
+        }
+        let execution = AgentExecution {
+            status,
+            exit_code: outcome.exit_code,
+            timed_out: outcome.timed_out,
+            started_at,
+            finished_at: Utc::now(),
+            duration_ms: outcome.duration_ms(),
+            stdout_path: stdout_path.clone(),
+            stderr_path: stderr_path.clone(),
+            usage: report.as_ref().map(ClaudeResult::usage).unwrap_or_default(),
+            // Recorded as trajectory data. Nothing downstream reads it.
+            self_report: report.as_ref().and_then(|r| r.result.clone()),
+            harness_metadata: metadata,
+            infrastructure_failures: outcome.infrastructure_failures.clone(),
+        };
 
         ctx.events.emit(EventPayload::AgentFinished {
             status: execution.status,
@@ -460,9 +599,24 @@ mod tests {
     use super::*;
     use forge_core::agent::AgentConfig;
     use forge_core::run::AgentExecutionStatus;
+    use forge_core::security::NetworkPolicy;
 
     fn adapter() -> ClaudeAdapter {
         ClaudeAdapter::new()
+    }
+
+    fn required_containment() -> ExecutionSandboxConfig {
+        ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: format!("forge@sha256:{}", "a".repeat(64)),
+            network: NetworkPolicy::Allowed,
+            restricted_network: None,
+            cpu_millis: 2_000,
+            memory_bytes: 1024 * 1024 * 1024,
+            pids_limit: 128,
+            workspace_limit_bytes: 4 * 1024 * 1024 * 1024,
+            credential_env: vec!["ANTHROPIC_API_KEY".into()],
+        }
     }
 
     #[test]
@@ -521,6 +675,55 @@ mod tests {
     }
 
     #[test]
+    fn contained_execution_requires_the_bare_one_shot_wrapper_and_api_key() {
+        let mut config = AgentConfig::new(AgentId::new("claude").unwrap(), "claude-code");
+        config.sandbox = required_containment();
+
+        let direct = ClaudeAdapter::from_config(&config);
+        let error = direct.validate_config().unwrap_err().to_string();
+        assert!(error.contains(CONTAINED_EXECUTABLE), "{error}");
+
+        config
+            .settings
+            .insert("executable".into(), CONTAINED_EXECUTABLE.into());
+        let wrapped = ClaudeAdapter::from_config(&config);
+        assert!(wrapped.validate_config().is_ok());
+        let metadata = wrapped.invocation_metadata();
+        assert_eq!(
+            metadata
+                .get("claude.credential_isolation")
+                .map(String::as_str),
+            Some("one-shot-api-key-helper-v1")
+        );
+
+        if let ExecutionSandboxConfig::Required { credential_env, .. } = &mut config.sandbox {
+            *credential_env = vec!["CLAUDE_CODE_OAUTH_TOKEN".into()];
+        }
+        let error = ClaudeAdapter::from_config(&config)
+            .validate_config()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("ANTHROPIC_API_KEY"), "{error}");
+    }
+
+    #[test]
+    fn reserved_or_unknown_security_configuration_is_rejected() {
+        let error = adapter()
+            .with_extra_args(vec!["--settings=/repo/untrusted.json".into()])
+            .validate_config()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("reserved"), "{error}");
+
+        let error = adapter()
+            .with_permission_mode("invented")
+            .validate_config()
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown permission_mode"), "{error}");
+    }
+
+    #[test]
     fn the_prompt_is_passed_as_an_argument_not_interpolated_into_a_shell() {
         // Command construction must not be shell-quoted: a prompt containing
         // backticks or `$(...)` is data, never something to evaluate.
@@ -552,6 +755,28 @@ mod tests {
         assert!(built.contains_key("ANTHROPIC_API_KEY"));
         assert!(built.contains_key("PATH"));
         assert!(!built.contains_key("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn contained_environment_excludes_oauth_and_bearer_credentials() {
+        let mut config = AgentConfig::new(AgentId::new("claude").unwrap(), "claude-code");
+        config.sandbox = required_containment();
+        config
+            .settings
+            .insert("executable".into(), CONTAINED_EXECUTABLE.into());
+        let contained = ClaudeAdapter::from_config(&config);
+        let env = [
+            ("ANTHROPIC_API_KEY", "api-key"),
+            ("ANTHROPIC_AUTH_TOKEN", "bearer"),
+            ("CLAUDE_CODE_OAUTH_TOKEN", "oauth"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value.to_string()));
+        let built = contained.env_policy().build_from(env);
+
+        assert!(built.contains_key("ANTHROPIC_API_KEY"));
+        assert!(!built.contains_key("ANTHROPIC_AUTH_TOKEN"));
+        assert!(!built.contains_key("CLAUDE_CODE_OAUTH_TOKEN"));
     }
 
     #[test]

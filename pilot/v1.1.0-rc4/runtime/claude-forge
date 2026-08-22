@@ -1,0 +1,49 @@
+#!/bin/sh
+set -eu
+
+# Version probing must never require or consume a credential.
+if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+    exec claude --version
+fi
+
+: "${ANTHROPIC_API_KEY:?Forge did not inject the required invocation-scoped ANTHROPIC_API_KEY}"
+
+# Claude's bare mode disables repository/user hooks, plugins, memory, project
+# instructions, keychain fallback, and other ambient customizations. The API
+# key is placed in a private one-shot helper file, removed before the first
+# model response can launch a tool, and never inherited by tool subprocesses.
+auth_dir="$HOME/.forge-claude-auth"
+key_file="$auth_dir/api-key"
+helper_file="$auth_dir/api-key-helper"
+settings_file="$auth_dir/settings.json"
+umask 077
+mkdir -p "$auth_dir"
+printf '%s\n' "$ANTHROPIC_API_KEY" >"$key_file"
+unset ANTHROPIC_API_KEY
+
+cat >"$helper_file" <<'HELPER'
+#!/bin/sh
+set -eu
+key_file="$HOME/.forge-claude-auth/api-key"
+trap 'rm -f "$key_file"' EXIT HUP INT TERM
+IFS= read -r api_key <"$key_file"
+rm -f "$key_file"
+printf '%s' "$api_key"
+HELPER
+chmod 0400 "$helper_file"
+
+cat >"$settings_file" <<'SETTINGS'
+{"apiKeyHelper":"/bin/sh /home/forge/.forge-claude-auth/api-key-helper"}
+SETTINGS
+chmod 0400 "$settings_file"
+
+# Keep the helper result in the provider process for longer than Forge's
+# maximum supported pilot timeout so the deleted one-shot file is never read a
+# second time. The container-private HOME disappears during mandatory cleanup.
+export CLAUDE_CODE_API_KEY_HELPER_TTL_MS=86400000
+exec claude \
+    --bare \
+    --no-session-persistence \
+    --setting-sources user \
+    --settings "$settings_file" \
+    "$@"

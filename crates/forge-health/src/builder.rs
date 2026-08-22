@@ -276,7 +276,7 @@ impl RepositoryHealthBuilder {
                 if check.kind != EvaluatorKind::Test || !check.required {
                     continue;
                 }
-                if check.execution_status == EvaluatorExecutionStatus::Error {
+                if check.execution_status != EvaluatorExecutionStatus::Completed {
                     continue;
                 }
                 total += 1;
@@ -481,7 +481,7 @@ impl RepositoryHealthBuilder {
                 ) {
                     continue;
                 }
-                if check.execution_status == EvaluatorExecutionStatus::Error {
+                if check.execution_status != EvaluatorExecutionStatus::Completed {
                     continue;
                 }
                 measurements.push(
@@ -559,7 +559,7 @@ impl RepositoryHealthBuilder {
         for item in at_commit {
             for check in item.evaluation_checks {
                 if check.kind != EvaluatorKind::Security
-                    || check.execution_status == EvaluatorExecutionStatus::Error
+                    || check.execution_status != EvaluatorExecutionStatus::Completed
                 {
                     continue;
                 }
@@ -678,7 +678,7 @@ fn metrics_from(
     let mut measurements = Vec::new();
     for item in evidence {
         for check in item.evaluation_checks {
-            if !accept(check) || check.execution_status == EvaluatorExecutionStatus::Error {
+            if !accept(check) || check.execution_status != EvaluatorExecutionStatus::Completed {
                 continue;
             }
             measurements.extend(metrics_to_measurements(

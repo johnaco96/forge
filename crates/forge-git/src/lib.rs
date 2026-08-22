@@ -16,8 +16,8 @@ pub(crate) mod test_support;
 
 pub use diff::{
     DiffStat, cached_patch, capture_workspace_patch, commit_staged_workspace, commit_workspace,
-    patch_between, stage_candidate_patch, stat_between, workspace_delta,
+    patch_between, stage_candidate_patch, stat_between, workspace_contains_secret, workspace_delta,
 };
 pub use error::{GitError, GitResult};
 pub use repository::Repository;
-pub use worktree::{Worktree, WorktreeManager};
+pub use worktree::{Worktree, WorktreeManager, validate_worktree_git_link};

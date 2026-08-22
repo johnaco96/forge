@@ -23,7 +23,10 @@ assert policy == {
     "team_auto_dispatch": False,
     "automatic_merge": False,
 }
-assert len(plan["required_drills"]) == 13
+assert len(plan["required_drills"]) == 16
+assert "contained_evaluator_without_provider_credentials" in plan["required_drills"]
+assert "contained_evaluator_toolchain_complete" in plan["required_drills"]
+assert "failed_workspace_retained_when_configured" in plan["required_drills"]
 assert "full_commit_sha" in plan["baseline_fields_required"]
 assert "container_image_digest" in plan["baseline_fields_required"]
 print(
@@ -31,4 +34,3 @@ print(
     f"{len(repositories)} candidates, "
     f"{len(plan['required_drills'])} required drills"
 )
-

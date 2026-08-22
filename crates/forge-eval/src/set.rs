@@ -5,8 +5,11 @@ use std::time::Instant;
 use chrono::Utc;
 use forge_core::events::{EvaluationSubject, EventPayload};
 use forge_core::ids::RunId;
-use forge_core::result::{CheckResult, Dimension, Evaluation, EvaluatorKind, Score, Verdict};
+use forge_core::result::{
+    CheckResult, Dimension, Evaluation, EvaluatorExecutionStatus, EvaluatorKind, Score, Verdict,
+};
 use forge_core::task::EngineeringTask;
+use forge_core::task::EvaluatorToolRequirement;
 
 use crate::evaluator::{EvaluationContext, Evaluator};
 use crate::{
@@ -19,6 +22,13 @@ use crate::{
 /// their command, timeout, requiredness, working directory, or output path.
 pub struct EvaluationPlan {
     evaluators: Vec<Box<dyn Evaluator>>,
+}
+
+/// An executable prerequisite tied to the evaluator which requires it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct EvaluatorPrerequisite {
+    pub evaluator_id: String,
+    pub requirement: EvaluatorToolRequirement,
 }
 
 impl EvaluationPlan {
@@ -75,6 +85,25 @@ impl EvaluationPlan {
         self.evaluators
             .iter()
             .map(|evaluator| evaluator.id().to_string())
+            .collect()
+    }
+
+    /// Returns the explicit prerequisite set in deterministic evaluator/tool
+    /// order. Duplicate declarations inside one evaluator are rejected by task
+    /// validation; a tool used by two evaluators remains associated with both.
+    pub fn prerequisites(&self) -> Vec<EvaluatorPrerequisite> {
+        self.evaluators
+            .iter()
+            .flat_map(|evaluator| {
+                evaluator
+                    .required_tools()
+                    .iter()
+                    .cloned()
+                    .map(|requirement| EvaluatorPrerequisite {
+                        evaluator_id: evaluator.id().to_string(),
+                        requirement,
+                    })
+            })
             .collect()
     }
 
@@ -156,6 +185,7 @@ impl EvaluationEngine {
             }
 
             let timer = Instant::now();
+            let mut cancelled = false;
             let check = match evaluator.evaluate(ctx).await {
                 Ok(check) => {
                     ctx.events.emit(EventPayload::EvaluatorCompleted {
@@ -170,6 +200,7 @@ impl EvaluationEngine {
                     check
                 }
                 Err(error) => {
+                    cancelled = matches!(&error, crate::EvalError::Cancelled { .. });
                     let infrastructure_failure = match &error {
                         crate::EvalError::Exec(forge_executor::ExecError::Infrastructure(
                             failure,
@@ -196,12 +227,18 @@ impl EvaluationEngine {
                     if let Some(failure) = infrastructure_failure {
                         check.infrastructure_failures.push(failure);
                     }
+                    if cancelled {
+                        check.execution_status = EvaluatorExecutionStatus::Cancelled;
+                    }
                     check
                 }
             };
 
             emit_legacy_check_events(ctx, &check);
             checks.push(check);
+            if cancelled {
+                break;
+            }
         }
 
         let evaluation = derive_dimensions(Evaluation::from_subject_checks(
@@ -291,6 +328,50 @@ mod tests {
     use forge_core::result::EvaluatorExecutionStatus;
     use forge_executor::ProcessRunner;
 
+    struct CancellingEvaluator;
+
+    #[async_trait::async_trait]
+    impl Evaluator for CancellingEvaluator {
+        fn id(&self) -> &str {
+            "cancelled"
+        }
+
+        fn kind(&self) -> EvaluatorKind {
+            EvaluatorKind::Custom
+        }
+
+        fn required(&self) -> bool {
+            true
+        }
+
+        async fn evaluate(&self, _ctx: &EvaluationContext<'_>) -> crate::EvalResult<CheckResult> {
+            Err(crate::EvalError::Cancelled {
+                check: self.id().into(),
+            })
+        }
+    }
+
+    struct MustNotRunEvaluator;
+
+    #[async_trait::async_trait]
+    impl Evaluator for MustNotRunEvaluator {
+        fn id(&self) -> &str {
+            "must-not-run"
+        }
+
+        fn kind(&self) -> EvaluatorKind {
+            EvaluatorKind::Custom
+        }
+
+        fn required(&self) -> bool {
+            true
+        }
+
+        async fn evaluate(&self, _ctx: &EvaluationContext<'_>) -> crate::EvalResult<CheckResult> {
+            panic!("evaluation continued after operator cancellation")
+        }
+    }
+
     #[derive(Default)]
     struct PayloadSink(Mutex<Vec<EventPayload>>);
 
@@ -311,6 +392,28 @@ mod tests {
             .run(RunId::sequential(1), &ctx)
             .await;
         assert_eq!(evaluation.verdict, Verdict::Inconclusive);
+    }
+
+    #[tokio::test]
+    async fn operator_cancellation_stops_the_remaining_evaluation_plan() {
+        let ws = TestWorkspace::new();
+        let runner = ProcessRunner::conservative();
+        let ctx = EvaluationContext::new(&ws.workspace, &ws.task, &runner, &NullSink);
+        let plan = EvaluationPlan::new(vec![
+            Box::new(CancellingEvaluator),
+            Box::new(MustNotRunEvaluator),
+        ]);
+
+        let evaluation = EvaluationEngine::new(plan)
+            .run(RunId::sequential(1), &ctx)
+            .await;
+
+        assert_eq!(evaluation.verdict, Verdict::Inconclusive);
+        assert_eq!(evaluation.checks.len(), 1);
+        assert_eq!(
+            evaluation.checks[0].execution_status,
+            EvaluatorExecutionStatus::Cancelled
+        );
     }
 
     #[tokio::test]
@@ -493,6 +596,31 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[tokio::test]
+    async fn unavailable_declared_tool_is_inconclusive_infrastructure() {
+        let ws = TestWorkspace::new();
+        let mut task = task_with(&[("tests", "exit 99")]);
+        task.evaluation.tests.as_mut().unwrap().required_tools.push(
+            forge_core::task::EvaluatorToolRequirement::new(
+                "forge-evaluator-tool-that-disappeared",
+            ),
+        );
+        let runner = ProcessRunner::conservative();
+        let sink = RecordingSink::new(RunId::sequential(1));
+        let ctx = EvaluationContext::new(&ws.workspace, &task, &runner, &sink);
+
+        let evaluation = EvaluationPlan::resolve(&task)
+            .run(RunId::sequential(1), &ctx)
+            .await;
+
+        assert_eq!(evaluation.verdict, Verdict::Inconclusive);
+        let check = evaluation.check("tests").unwrap();
+        assert_eq!(check.execution_status, EvaluatorExecutionStatus::Error);
+        assert!(check.infrastructure_failures.iter().any(|failure| {
+            failure.kind == forge_core::run::InfrastructureFailureKind::EvaluatorToolUnavailable
+        }));
     }
 
     #[test]

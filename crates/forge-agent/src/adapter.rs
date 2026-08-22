@@ -17,13 +17,52 @@ use forge_core::agent::{AgentConfig, AgentDescriptor};
 use forge_core::events::EventSink;
 use forge_core::ids::RunId;
 use forge_core::run::AgentExecution;
-use forge_core::security::AgentSecurity;
+use forge_core::security::{AgentSecurity, ExecutionSandboxConfig};
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
 use forge_core::world::WorldModelContext;
 use forge_executor::{DiskWatch, ExecutionSandbox};
 
 use crate::error::AgentResult;
+
+/// Provider credential names explicitly approved for this contained agent
+/// invocation and understood by its adapter. Evaluators never call this path.
+pub(crate) fn contained_agent_credentials(
+    config: &ExecutionSandboxConfig,
+    supported: &[&str],
+) -> Vec<String> {
+    contained_agent_credentials_with(config, supported, |name| {
+        std::env::var(name).is_ok_and(|value| !value.is_empty())
+    })
+}
+
+fn contained_agent_credentials_with(
+    config: &ExecutionSandboxConfig,
+    supported: &[&str],
+    is_present: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let ExecutionSandboxConfig::Required { credential_env, .. } = config else {
+        return Vec::new();
+    };
+
+    // Provider credential names are alternatives, not cumulative secrets. A
+    // profile may allow both an API key and an OAuth token so different
+    // operators can use the same immutable profile. Pass only the provider's
+    // first configured, present choice. If none is present, return the first
+    // configured choice so ProcessRunner emits a typed CredentialUnavailable
+    // failure before a subprocess starts.
+    let configured = supported
+        .iter()
+        .filter(|name| credential_env.iter().any(|allowed| allowed == **name))
+        .copied()
+        .collect::<Vec<_>>();
+    configured
+        .iter()
+        .find(|name| is_present(name))
+        .or_else(|| configured.first())
+        .map(|name| vec![(*name).to_string()])
+        .unwrap_or_default()
+}
 
 /// Everything an adapter needs to execute one run.
 pub struct RunContext<'a> {
@@ -128,5 +167,74 @@ pub trait AgentAdapter: Send + Sync {
     /// already finished.
     async fn cancel(&self, _run_id: &RunId) -> AgentResult<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use forge_core::security::NetworkPolicy;
+
+    #[test]
+    fn contained_agent_requests_only_configured_supported_credentials() {
+        let config = ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: format!("forge@sha256:{}", "a".repeat(64)),
+            network: NetworkPolicy::None,
+            restricted_network: None,
+            cpu_millis: 1_000,
+            memory_bytes: 1024,
+            pids_limit: 16,
+            workspace_limit_bytes: 4096,
+            credential_env: vec!["ANTHROPIC_API_KEY".into(), "CODEX_API_KEY".into()],
+        };
+
+        assert_eq!(
+            contained_agent_credentials_with(
+                &config,
+                &["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+                |name| name == "ANTHROPIC_API_KEY"
+            ),
+            vec!["ANTHROPIC_API_KEY"]
+        );
+        assert_eq!(
+            contained_agent_credentials_with(&config, &["CODEX_API_KEY"], |_| true),
+            vec!["CODEX_API_KEY"]
+        );
+        assert!(
+            contained_agent_credentials_with(
+                &ExecutionSandboxConfig::None,
+                &["CODEX_API_KEY"],
+                |_| true
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn contained_agent_selects_one_present_alternative_and_fails_closed_without_one() {
+        let config = ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: format!("forge@sha256:{}", "a".repeat(64)),
+            network: NetworkPolicy::None,
+            restricted_network: None,
+            cpu_millis: 1_000,
+            memory_bytes: 1024,
+            pids_limit: 16,
+            workspace_limit_bytes: 4096,
+            credential_env: vec!["ANTHROPIC_API_KEY".into(), "ANTHROPIC_AUTH_TOKEN".into()],
+        };
+        let supported = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"];
+
+        assert_eq!(
+            contained_agent_credentials_with(&config, &supported, |name| {
+                name == "ANTHROPIC_AUTH_TOKEN"
+            }),
+            vec!["ANTHROPIC_AUTH_TOKEN"]
+        );
+        assert_eq!(
+            contained_agent_credentials_with(&config, &supported, |_| false),
+            vec!["ANTHROPIC_API_KEY"]
+        );
     }
 }

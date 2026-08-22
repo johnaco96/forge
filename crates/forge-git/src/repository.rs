@@ -155,11 +155,34 @@ where
     let output = Command::new("git")
         .arg("-C")
         .arg(dir)
+        // Git is part of Forge's trusted measurement/control plane. Repository
+        // configuration must not turn a bookkeeping command into host code
+        // execution after an untrusted agent has edited the worktree.
+        .args([
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.untrackedCache=false",
+            "-c",
+            "commit.gpgsign=false",
+        ])
         .args(&args)
         // Keep Git non-interactive: a credential or editor prompt inside an
         // unattended agent run would hang until the timeout.
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_OPTIONAL_LOCKS", "0")
+        .env_remove("GIT_EXTERNAL_DIFF")
+        .env_remove("GIT_DIFF_OPTS")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_OBJECT_DIRECTORY")
+        .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+        .env_remove("GIT_CONFIG_COUNT")
+        .env_remove("GIT_CONFIG_PARAMETERS")
         .output()
         .map_err(|source| {
             if source.kind() == std::io::ErrorKind::NotFound {

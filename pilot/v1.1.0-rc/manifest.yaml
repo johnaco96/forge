@@ -1,0 +1,114 @@
+pilot_id: forge-v1.1.0-rc-supervised-pilot-2026-08
+frozen_at: 2026-08-17
+status: frozen-before-model-outcomes
+forge:
+  version: 1.1.0
+  starting_commit: be770b858e3aeff90618494b4fc0d133333527ef
+  qualification_tree: uncommitted-human-review
+sandbox:
+  image: localhost:5000/forge/pilot-runtime@sha256:cb33df58846a9f95b46928253ea8aac7d68c31ce18d8fa428e40715b767aac8a
+  platform: linux/arm64
+  build_definition: pilot/v1.1.0-rc/runtime/Dockerfile
+  build_definition_sha256: 940f5c6ba24c6f198bc78bc0fda739d5facca5beddb9073dc8fd1d46e8b20a66
+  runtimes:
+    rustc: 1.93.1
+    cargo: 1.93.1
+    node: 24.19.0
+    pnpm: 10.12.1
+    python: 3.11.2
+    git: 2.39.5
+    claude: 2.1.223
+    codex: 0.147.0
+containment:
+  mode: required
+  fallback: forbidden
+  root_filesystem: read-only
+  home: private /home/forge tmpfs
+  tmp: private 1 GiB tmpfs
+  mounts: candidate worktree writable; Git common directory read-only
+  excluded_mounts: [primary_worktree, host_home, host_ssh, host_aws, host_config, host_codex, host_claude]
+  cpu_millis: 2000
+  memory_bytes: 4294967296
+  pids_limit: 256
+  workspace_limit_bytes: 21474836480
+  minimum_free_bytes: 1073741824
+  minimum_free_percent: 5
+  emergency_free_bytes: 536870912
+  disk_watch_interval_secs: 5
+  timeout_secs: 1800
+network:
+  policy: allowed
+  rationale: provider APIs and reproducible dependency installation require egress
+  forge_enforced: explicit ordinary Docker bridge selection
+  operator_managed_limitation: destination allowlisting is not enforced by Forge
+credentials:
+  policy: one named provider secret per job; never host config or ambient shell wholesale
+  claude: [ANTHROPIC_API_KEY]
+  codex: [CODEX_API_KEY]
+profiles:
+  - { path: pilot/v1.1.0-rc/profiles/fd-claude.toml, sha256: 873cdc36273c4f19d9903522b11f9254f91f4de51360aaf47380ad8ba96f5e9e }
+  - { path: pilot/v1.1.0-rc/profiles/httpx-codex.toml, sha256: 31a1078fa2d39489e418d0c217477f816ca449696bcf9817eb1552d76af3a80f }
+  - { path: pilot/v1.1.0-rc/profiles/zod-claude.toml, sha256: b06d08026e7e6abfd2930721c5c7536ce2732ac087a9d230a5670d8fd50f1b73 }
+repositories:
+  - id: fd
+    url: https://github.com/sharkdp/fd.git
+    commit: ee20f426ddf338ac7ead5c5f00ea49258005caaf
+    ecosystem: Rust
+    license: MIT OR Apache-2.0
+    baseline: "PASS: 268 tests"
+  - id: httpx
+    url: https://github.com/encode/httpx.git
+    commit: b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+    ecosystem: Python
+    license: BSD-3-Clause
+    baseline: "KNOWN FAILURE: 1416 passed, 1 skipped, Trio test_write_timeout ResourceWarning"
+  - id: zod
+    url: https://github.com/colinhacks/zod.git
+    commit: 9f0a3d81221e3ab7c09ca4911ef35b54817869a4
+    ecosystem: TypeScript
+    license: MIT
+    baseline: "FUNCTIONAL PASS: 4358 passed; one attw packaging snapshot cannot execute npm pack in hardened image"
+excluded_repositories:
+  - id: ripgrep
+    commit: 3fce3b5bb0236da2df6d99672afb8a719642eca7
+    reason: upstream AI_POLICY.md disallows autonomous-agent contributions
+routing:
+  mode: recommendation-shadow-only
+  execution_authority: predeclared explicit agent
+  minimum_score_margin: 0.05
+  automatic_routing: false
+  holdout_consumed: false
+  automatic_merge: false
+  automatic_policy_promotion: false
+  automatic_team_dispatch: false
+tasks:
+  - { id: F-PILOT-FD-001, agent: claude, category: correctness, sha256: 3453fcc112325e709b9f360733d966a089a9faccf21987d8965716c74d7018a9 }
+  - { id: F-PILOT-FD-002, agent: claude, category: debugging, sha256: 64c43a4d0219492577690d5e738aa1df87667100bf1a6e74e71a3344540ce27b }
+  - { id: F-PILOT-FD-003, agent: claude, category: feature, sha256: 51b82deb24ed0b2a37dccfd47300f63960b899c6a8f30c904252405b13e5acaf }
+  - { id: F-PILOT-HTTPX-001, agent: codex, category: debugging, sha256: 45e099577c020b90de3cb1d5aa4464df8408b74679fb9944ea220146a4f14f18 }
+  - { id: F-PILOT-HTTPX-002, agent: codex, category: correctness, sha256: a1ae3b4505515e861e9727972aba2b5af0bb3dc38e0f14c8dcc869714da39d8b }
+  - { id: F-PILOT-HTTPX-003, agent: codex, category: feature, sha256: 18e18ef141412ef6f7764db5ab13f13b90407b912b593fb3bd1a05d5ea7c7a13 }
+  - { id: F-PILOT-ZOD-001, agent: claude, category: feature, sha256: 4ba93aa74390041a3fc53e846b8405e186bf65b379fb41c7afba4a59464c28bb }
+  - { id: F-PILOT-ZOD-002, agent: claude, category: feature, sha256: 4c97d73d38b5421522d23102310fe50f68551b838e8c5f8de88da51e561c7b20 }
+  - { id: F-PILOT-ZOD-003, agent: claude, category: correctness, sha256: 97620ff13f28aaf9b8c94d90e62234a4a85159ca401693bf4a64b4d5e50be0aa }
+evidence_fields: [run_outcome, integrity_status, agent_runtime, forge_total_runtime, provider_tokens, provider_cost_or_credits, patch_size, evaluator_metrics, resource_events, sandbox_events, cleanup_state, backup_state, router_shadow_decision, effective_configuration_fingerprint]
+retention:
+  mandatory_durable_days: 365
+  agent_streams_days: 30
+  provider_raw_streams_days: 30
+  failed_workspaces_days: 7
+  ephemeral_cleanup: after successful evidence capture
+  approval: proposed-human-approval-required
+acceptance:
+  minimum_repositories_exercised: 2
+  minimum_ecosystems_exercised: 2
+  critical_failure_drills: all-pass
+  doctor: all-profiles-green
+  infrastructure_failures: 0
+  production_class_defects: 0
+  remote_ci: green-or-release-blocked
+failure_drills: [interrupted_subprocess, provider_failure, timeout, low_disk, memory_limit, missing_runtime, network_disabled, missing_credential, sqlite_backup, sqlite_restore, migration_upgrade, fingerprint_drift, stale_harness, failed_run_cleanup]
+stopping_rules:
+  - stop before any model run unless doctor, frozen manifest, and critical drills are green
+  - stop on escape, secret exposure, uncontained execution, corruption, evidence loss, contamination, false integrity pass, migration damage, or resource misclassification
+  - stop before merge, tag, push, publication, or release creation for human review

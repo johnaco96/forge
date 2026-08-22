@@ -109,6 +109,10 @@ impl Evaluator for BenchmarkEvaluator {
         Some(&self.spec.command)
     }
 
+    fn required_tools(&self) -> &[forge_core::task::EvaluatorToolRequirement] {
+        &self.spec.required_tools
+    }
+
     async fn evaluate(&self, ctx: &EvalContext<'_>) -> EvalResult<CheckResult> {
         let metrics_path = self.metrics_path(&ctx.workspace.path)?;
         if let Some(path) = &metrics_path

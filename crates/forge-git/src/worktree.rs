@@ -124,6 +124,16 @@ impl WorktreeManager {
                 reason: "branch name is empty".to_string(),
             });
         }
+        if self
+            .repo
+            .git(["check-ref-format", "--branch", branch])
+            .is_err()
+        {
+            return Err(GitError::InvalidWorkspaceName {
+                name: name.to_string(),
+                reason: format!("branch `{branch}` is not a valid Git branch name"),
+            });
+        }
 
         let base_commit = self.repo.resolve(base_commit)?;
         let path = self.root.join(name);
@@ -139,6 +149,7 @@ impl WorktreeManager {
             "--quiet",
             "-b",
             branch,
+            "--",
             &path.to_string_lossy(),
             &base_commit,
         ])?;
@@ -179,7 +190,7 @@ impl WorktreeManager {
             .git(["worktree", "remove", "--force", &path.to_string_lossy()])?;
 
         if delete_branch {
-            self.repo.git(["branch", "-D", worktree.branch()])?;
+            self.repo.git(["branch", "-D", "--", worktree.branch()])?;
         }
         Ok(())
     }
@@ -263,6 +274,100 @@ impl WorktreeManager {
     }
 }
 
+/// Verifies that a candidate workspace still points at its own linked-worktree
+/// administration directory under the expected shared Git directory.
+///
+/// The `.git` pointer lives inside the workspace. Production containment mounts
+/// it read-only, and this check is the independent fail-closed guard before any
+/// host-side staging or diff command trusts it.
+pub fn validate_worktree_git_link(workspace: &Path, expected_common: &Path) -> GitResult<()> {
+    let git_link = workspace.join(".git");
+    let metadata = fs::symlink_metadata(&git_link).map_err(|source| GitError::Io {
+        context: format!("reading worktree Git pointer {}", git_link.display()),
+        source,
+    })?;
+    if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+        return Err(GitError::UnsafePath {
+            path: git_link,
+            reason: "worktree .git pointer is not a regular file".into(),
+        });
+    }
+    let pointer = fs::read_to_string(&git_link).map_err(|source| GitError::Io {
+        context: format!("reading worktree Git pointer {}", git_link.display()),
+        source,
+    })?;
+    let target = pointer
+        .trim()
+        .strip_prefix("gitdir: ")
+        .ok_or_else(|| GitError::UnsafePath {
+            path: git_link.clone(),
+            reason: "worktree .git pointer has an invalid format".into(),
+        })?;
+    let target = PathBuf::from(target);
+    let target_path = if target.is_absolute() {
+        target
+    } else {
+        workspace.join(target)
+    };
+    let target = canonicalize(&target_path)?;
+    let expected_common = canonicalize(expected_common)?;
+    let worktrees_root = expected_common.join("worktrees");
+    if !target.starts_with(&worktrees_root) || target == worktrees_root {
+        return Err(GitError::UnsafePath {
+            path: target,
+            reason: format!(
+                "worktree Git administration directory is outside {}",
+                worktrees_root.display()
+            ),
+        });
+    }
+
+    let backlink = fs::read_to_string(target.join("gitdir")).map_err(|source| GitError::Io {
+        context: format!("reading worktree Git backlink in {}", target.display()),
+        source,
+    })?;
+    let backlink = PathBuf::from(backlink.trim());
+    let backlink_path = if backlink.is_absolute() {
+        backlink
+    } else {
+        target.join(backlink)
+    };
+    let backlink = canonicalize(&backlink_path)?;
+    let canonical_link = canonicalize(&git_link)?;
+    if backlink != canonical_link {
+        return Err(GitError::UnsafePath {
+            path: target,
+            reason: "worktree Git administration directory points at a different workspace".into(),
+        });
+    }
+
+    let commondir =
+        fs::read_to_string(target.join("commondir")).map_err(|source| GitError::Io {
+            context: format!(
+                "reading worktree common-dir pointer in {}",
+                target.display()
+            ),
+            source,
+        })?;
+    let commondir = PathBuf::from(commondir.trim());
+    let commondir_path = if commondir.is_absolute() {
+        commondir
+    } else {
+        target.join(commondir)
+    };
+    let actual_common = canonicalize(&commondir_path)?;
+    if actual_common != expected_common {
+        return Err(GitError::UnsafePath {
+            path: actual_common,
+            reason: format!(
+                "worktree resolves to an unexpected shared Git directory; expected {}",
+                expected_common.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +396,49 @@ mod tests {
     }
 
     #[test]
+    fn invalid_or_option_like_branch_names_are_rejected_before_creation() {
+        let repo = TestRepo::new();
+        let base = repo.repository().head_commit().unwrap();
+        let manager = manager(&repo);
+
+        for branch in ["-dangerous", "forge/../escape", "forge/has space"] {
+            assert!(manager.create("R-0001", &base, branch).is_err(), "{branch}");
+            assert!(!manager.root().join("R-0001").exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repository_hooks_do_not_execute_during_worktree_control_operations() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo = TestRepo::new();
+        let hooks = repo.path().join("hostile-hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let escaped = repo.path().join("host-hook-escape-marker");
+        let hook = hooks.join("post-checkout");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\nprintf escaped > '{}'\n", escaped.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        repo.repository()
+            .git(["config", "core.hooksPath", &hooks.to_string_lossy()])
+            .unwrap();
+
+        let base = repo.repository().head_commit().unwrap();
+        let manager = manager(&repo);
+        let worktree = manager.create("R-0001", &base, "forge/R-0001").unwrap();
+
+        assert!(worktree.path().is_dir());
+        assert!(
+            !escaped.exists(),
+            "repository hook executed outside the agent sandbox"
+        );
+    }
+
+    #[test]
     fn two_agents_start_from_identical_state_and_do_not_interfere() {
         let repo = TestRepo::new();
         let base = repo.repository().head_commit().unwrap();
@@ -312,6 +460,24 @@ mod tests {
             fs::read_to_string(repo.path().join("README.md")).unwrap(),
             "# test repo\n"
         );
+    }
+
+    #[test]
+    fn worktree_git_pointer_validation_rejects_redirection() {
+        let repo = TestRepo::new();
+        let base = repo.repository().head_commit().unwrap();
+        let manager = manager(&repo);
+        let worktree = manager.create("R-0001", &base, "forge/R-0001").unwrap();
+        let common = repo.repository().git_common_dir().unwrap();
+        validate_worktree_git_link(worktree.path(), &common).unwrap();
+
+        std::fs::write(
+            worktree.path().join(".git"),
+            format!("gitdir: {}\n", common.display()),
+        )
+        .unwrap();
+        let error = validate_worktree_git_link(worktree.path(), &common).unwrap_err();
+        assert!(matches!(error, GitError::UnsafePath { .. }), "{error}");
     }
 
     #[test]

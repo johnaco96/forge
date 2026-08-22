@@ -38,6 +38,9 @@
     "container_unavailable",
     "network_disabled",
     "credential_unavailable",
+    "contained_evaluator_without_provider_credentials",
+    "contained_evaluator_toolchain_complete",
+    "failed_workspace_retained_when_configured",
     "sqlite_backup_restore",
     "migration_upgrade",
     "configuration_fingerprint_drift",
@@ -53,4 +56,3 @@
     "evaluation_commands"
   ]
 }
-

@@ -20,7 +20,7 @@ use forge_core::events::EventSink;
 use forge_core::ids::TaskId;
 use forge_core::result::{CheckResult, EvaluatorKind};
 use forge_core::run::PatchSummary;
-use forge_core::task::{EngineeringTask, EvaluationSpec};
+use forge_core::task::{EngineeringTask, EvaluationSpec, EvaluatorToolRequirement};
 use forge_core::workspace::Workspace;
 use forge_executor::ProcessRunner;
 
@@ -147,6 +147,11 @@ pub trait Evaluator: Send + Sync {
     /// Trusted command displayed in lifecycle events, if command-backed.
     fn command(&self) -> Option<&str> {
         None
+    }
+
+    /// Explicit executable prerequisites for this trusted evaluator plan.
+    fn required_tools(&self) -> &[EvaluatorToolRequirement] {
+        &[]
     }
 
     /// Measures the change.

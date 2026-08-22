@@ -23,6 +23,11 @@ pub enum StoreError {
     NotFound(String),
 
     #[error(
+        "store `{path}` is in use by another Forge process; stop active jobs and retry the operation"
+    )]
+    Busy { path: String },
+
+    #[error(
         "run `{run_id}` is already bound to task revision `{existing}` and cannot be rebound to `{attempted}`"
     )]
     TaskRevisionConflict {

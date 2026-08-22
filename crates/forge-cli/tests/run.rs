@@ -278,6 +278,9 @@ fn a_passing_run_reports_agent_and_evaluation_separately() {
 
     // The two judgments appear in separate blocks and never merge.
     assert!(text.contains("Agent execution"), "{text}");
+    assert!(text.contains("Provenance"), "{text}");
+    assert!(text.contains("synthetic"), "{text}");
+    assert!(text.contains("Configuration"), "{text}");
     assert!(
         text.contains("Evaluation (run by Forge, not by the agent)"),
         "{text}"
@@ -476,7 +479,11 @@ fn a_nonzero_codex_exit_is_separate_from_a_passing_forge_outcome() {
     let text = stdout(&output);
     assert!(output.status.success(), "{text}\n{}", stderr(&output));
     assert!(text.contains("exited non-zero"), "{text}");
-    assert!(text.contains("Exit code  7"), "{text}");
+    assert!(
+        text.lines()
+            .any(|line| line.trim_start().starts_with("Exit code") && line.ends_with('7')),
+        "{text}"
+    );
     assert!(text.contains("PASS"), "{text}");
 }
 

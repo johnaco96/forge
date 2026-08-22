@@ -1,0 +1,21 @@
+task_id: F-PILOT-FD-002
+repository: fd
+objective: >-
+  Make size-filter parsing reject quantities whose unit multiplication exceeds
+  the supported integer range. Invalid inputs must return a normal CLI error,
+  never panic, and all currently valid decimal and binary units must retain
+  their behavior.
+constraints:
+  - Include boundary and overflow regression tests
+  - Do not widen the accepted size grammar
+  - Keep all existing tests passing
+protected_paths: ["Cargo.lock", "LICENSE-*", "CONTRIBUTING.md", "AI_POLICY.md"]
+evaluation:
+  tests: { command: "cargo test --locked", timeout_secs: 1200 }
+  lint: { command: "cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -D warnings", timeout_secs: 1200 }
+  custom:
+    - id: overflow_cli_contract
+      command: 'cargo build --locked && ! target/debug/fd --size 18446744073709551615t . 2>overflow.err && ! grep -qi panicked overflow.err && grep -Eqi "valid|invalid|size" overflow.err'
+classification: { category: debugging, language: rust, domain: filters, difficulty: medium }
+components: ["src/filter/size.rs"]
+tags: ["pilot-v1.1.0-rc", "overflow"]

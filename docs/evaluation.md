@@ -27,7 +27,14 @@ evaluation:
   tests:
     command: cargo test --workspace
     timeout_secs: 900
-  lint: cargo clippy --workspace --all-targets -- -D warnings
+    required_tools:
+      - executable: cargo
+        version_contains: "cargo 1.93."
+  lint:
+    command: cargo clippy --workspace --all-targets -- -D warnings
+    required_tools:
+      - executable: cargo-clippy
+        version_contains: "clippy 0.1.93"
   security:
     command: ./scripts/security-check.sh
     required: false
@@ -48,11 +55,18 @@ evaluation:
 ```
 
 Every command may set a repository-relative `working_dir`, an evaluator-specific
-`timeout_secs`, and `required`. The default is `required: true`, preserving the
-behavior of existing task files. Any failed required evaluator fails the
-evaluation; any inconclusive required evaluator makes it inconclusive. Optional
-results and metrics are always stored but do not change the overall verdict.
-Forge does not apply weights or compute a single quality score.
+`timeout_secs`, `required`, and an explicit `required_tools` list. A tool entry
+names one executable and may require a literal substring in its `--version`
+output. Forge checks the complete frozen prerequisite plan in the configured
+execution substrate before an agent starts, then checks the relevant tools
+again immediately before each evaluator. Missing or incompatible tooling is a
+typed infrastructure error, never candidate FAIL/PASS evidence.
+
+The default is `required: true`, preserving the behavior of existing task
+files. Any failed required evaluator fails the evaluation; any inconclusive
+required evaluator makes it inconclusive. Optional results and metrics are
+always stored but do not change the overall verdict. Forge does not apply
+weights or compute a single quality score.
 
 Custom `id` values must be unique, safe identifiers and cannot shadow built-in
 evaluator IDs. The earlier `name` spelling remains accepted for compatibility.
@@ -100,8 +114,10 @@ captured-output artifact, metrics, warnings, and any execution error.
 A tool that runs and exits nonzero is a valid `FAIL` measurement. Failure to
 start the evaluator is an execution error and yields `INCONCLUSIVE`; it does not
 become evidence that the candidate is wrong. A timed-out command is a completed
-negative measurement because it exceeded the task's declared budget. Later
-evaluators still run in every case.
+negative measurement because it exceeded the task's declared budget. Ordinary
+FAIL, timeout, or execution-error results preserve partial evidence and allow
+later evaluators to run. An explicit operator cancellation stops the remaining
+plan and cannot yield PASS.
 
 ## Trust and security
 
@@ -112,9 +128,12 @@ process-runner, and timeout context. They never reread a task definition written
 by the candidate.
 
 Evaluation commands run candidate code with Forge's conservative environment
-and secret filtering, but Forge does not provide host containment. A Git
-worktree isolates repository state; it is not a process sandbox. Configure only
-commands you are willing to run as the invoking user.
+and no provider credential. In development mode, Forge does not provide host
+containment: a Git worktree isolates repository state but is not a process
+sandbox, so configure only commands you are willing to run as the invoking
+user. In required production mode, evaluator commands run inside the same
+fail-closed OCI boundary as agents but as separate credential-free container
+invocations. The candidate worktree remains the only writable host mount.
 
 The SQLite ledger stores complete typed results plus normalized rows in
 `evaluator_results` and raw measurements in `metrics`. Lifecycle events include

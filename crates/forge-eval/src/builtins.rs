@@ -43,6 +43,10 @@ macro_rules! command_evaluator {
                 self.inner.command()
             }
 
+            fn required_tools(&self) -> &[forge_core::task::EvaluatorToolRequirement] {
+                self.inner.required_tools()
+            }
+
             async fn evaluate(&self, ctx: &EvaluationContext<'_>) -> EvalResult<CheckResult> {
                 self.inner.evaluate(ctx).await
             }
@@ -86,6 +90,10 @@ impl Evaluator for ComplexityEvaluator {
 
     fn command(&self) -> Option<&str> {
         self.inner.command()
+    }
+
+    fn required_tools(&self) -> &[forge_core::task::EvaluatorToolRequirement] {
+        self.inner.required_tools()
     }
 
     async fn evaluate(&self, ctx: &EvaluationContext<'_>) -> EvalResult<CheckResult> {
@@ -147,6 +155,10 @@ impl Evaluator for CustomEvaluator {
 
     fn command(&self) -> Option<&str> {
         self.evaluator().command()
+    }
+
+    fn required_tools(&self) -> &[forge_core::task::EvaluatorToolRequirement] {
+        self.evaluator().required_tools()
     }
 
     async fn evaluate(&self, ctx: &EvaluationContext<'_>) -> EvalResult<CheckResult> {

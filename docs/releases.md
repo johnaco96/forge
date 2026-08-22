@@ -2,8 +2,9 @@
 
 The workspace package version in Cargo.toml is authoritative. Every Forge crate
 inherits it, and forge --version must match it. The hardening candidate is
-1.1.0; no release tag is created by this program and the uncommitted tree is
-not itself a release.
+1.1.0. A local annotated release tag may be created only after the reviewed
+release commit and all achievable local gates are complete; it is not pushed
+or published by the local closure process.
 
 The pinned compiler is recorded in rust-toolchain.toml. Before a release:
 
@@ -14,17 +15,38 @@ The pinned compiler is recorded in rust-toolchain.toml. Before a release:
     git diff --check
     ./scripts/migration-gate.sh
     ./scripts/recovery-drill.sh
+    python3 pilot/v1.1.0-rc4/validate-release-decision.py
 
 CI additionally runs Tier 1 analysis tests, exact Rust replay determinism,
-holdout validation, Docker adversarial fixtures, and dependency audit. Provider
-credentials and live model calls are forbidden.
+holdout-plan validation, Docker adversarial fixtures, and dependency audit.
+Provider credentials and live model calls are forbidden in CI.
+
+A supervised release candidate also requires successful exact-image live probes
+for every selected provider, a frozen external-pilot decision, and the
+deployment-unit rollback rehearsal:
+
+    forge doctor --live-agent-probe --probe-agent claude
+    forge doctor --live-agent-probe --probe-agent codex
+    scripts/rollback-rehearsal.sh \
+      CURRENT_FORGE PREVIOUS_FORGE PREVIOUS_CONFIG VERIFIED_DB_BACKUP SOURCE_REPOSITORY
+
+These gates use approved job-scoped credentials and evidence outside ordinary
+credential-free CI. A static doctor PASS does not replace them.
+
+For RC4, seven of nine frozen tasks were executed and all seven passed. The
+release owner human-waived `F-PILOT-ZOD-002` and `F-PILOT-ZOD-003` because the
+provider API budget was nearly exhausted. The frozen nine-outcome criterion
+therefore remains not fully satisfied; the waiver is explicit risk acceptance,
+not PASS evidence. Preserve the frozen pre-outcome validator
+`pilot/v1.1.0-rc4/validate.py` unchanged. The separate release-decision
+validator checks the observed seven-run/two-waiver state.
 
 ## Packaging
 
 Build and package the current native platform:
 
     cargo build --release --locked -p forge-cli --bin forge
-    ./scripts/package-release.sh target/release/forge dist
+    ./scripts/package-release.sh target/release/forge dist/v1.1.0
 
 The archive contains the binary and machine-readable metadata: version, commit
 SHA, platform, architecture, latest migration, and sandbox requirement.
@@ -36,6 +58,17 @@ Tag-triggered packaging refuses a tag that differs from v plus the workspace
 version. Release notes must include migration changes, routing mode and
 threshold, containment/runtime/image requirements, known limitations, and the
 readiness matrix. Built binaries are release artifacts, not source files.
+
+The local tag sequence is:
+
+    git tag -a v1.1.0 -m "Forge v1.1.0"
+    git rev-parse v1.1.0^{}
+    git rev-parse HEAD
+
+The peeled tag must equal the reviewed release commit. Push the commit first,
+wait for its GitHub CI and dependency-security jobs, then push the tag. If a CI
+fix changes HEAD, delete and recreate only the unpushed local tag after the new
+commit completes local review; never move an already published release tag.
 
 ## Dependency audit
 

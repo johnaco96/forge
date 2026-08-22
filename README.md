@@ -45,7 +45,7 @@ base commit into a comparative experiment.
 | **Longitudinal repository health and typed trends** | ✅ |
 | **Immutable, evidence-backed engineering policy optimization** | ✅ |
 | Empirical Tier 1 campaign (20 real paired tasks) | ✅ completed; router selected 0 at the frozen 0.05 margin |
-| Production hardening (OCI containment, recovery, CI/release tooling) | 🧪 1.1.0 candidate; supervised pilot pending |
+| Production hardening (OCI containment, recovery, CI/release tooling) | ✅ 1.1.0 local release candidate; 7/7 executed RC4 tasks PASS, 2 human-waived; GitHub CI/publication pending |
 
 ---
 
@@ -265,7 +265,7 @@ See [`docs/security.md`](docs/security.md) and
 resource controls, backups, recovery, and incident response.
 See [`docs/production-readiness.md`](docs/production-readiness.md) for the
 conservative readiness matrix and [`docs/external-pilot.md`](docs/external-pilot.md)
-for the supervised pilot that remains to be executed.
+for the frozen supervised-pilot protocol and its RC4 outcome.
 
 ---
 
@@ -488,12 +488,13 @@ the build and test commands its instructions ask for. Set
 `permission_mode = "acceptEdits"` under `[agents.claude]` to tighten it, at the
 cost of the agent being unable to run commands.
 
-**Codex runs with its `workspace-write` sandbox and `never` approval policy by
-default.** This is intentionally not reported as Forge host containment. Codex
-constrains model-generated commands to its workspace boundary, while the CLI
-process itself still runs as the invoking user and Forge has not placed it in a
-container. `danger-full-access` is configurable but is reported as unrestricted
-and triggers Forge's unconfined-run warning.
+**Native/development Codex runs with its `workspace-write` sandbox and `never`
+approval policy by default.** This is intentionally not reported as Forge host
+containment. Under required production containment, Forge's hardened OCI
+container is the authoritative process boundary and Codex uses its documented
+externally-contained mode rather than trying to start a nested Bubblewrap
+namespace. The report makes that distinction explicit as
+`inner sandbox=bypassed, boundary=Forge OCI`.
 
 **Consequently: use host mode only for development tasks you would run by hand.
 Supervised production requires the container mode and the operational gates in
@@ -503,11 +504,15 @@ What Forge *does* guarantee, with tests:
 
 - It only ever creates or destroys directories inside its configured worktree
   root, and rejects any run or check name that could escape it.
-- Credentials are filtered out of the environment agents and checks inherit;
-  only the specific variables each selected harness needs are allowed back in,
-  and secret-looking values are redacted from captured output before it is stored.
-- Evaluation commands run with a conservative environment — they execute code
-  an agent just wrote, and have no business seeing credentials.
+- Credentials are selected per invocation. A contained agent may request only
+  one supported variable allowed by the profile; production wrappers move the
+  value into private ephemeral authentication state and remove it before
+  model-directed tools run. Captured output is redacted using the exact value,
+  including short credentials.
+- Evaluation commands request no provider credential and run as separate
+  conservative contained processes. Before staging or durable capture, Forge
+  scans candidate paths and tracked, untracked, ignored, binary, and symlink
+  content for exact invocation credential values; a match forces destruction.
 - Protected evaluation inputs are compared with the recorded base commit;
   additions, modifications, deletions, and task-scoped exceptions are persisted.
 - Ignored build output, Forge runtime files, Git internals, and oversized files

@@ -1,0 +1,158 @@
+pilot_id: forge-v1.1.0-rc2-contained-evaluator-remediation-2026-08
+qualification_stratum: production-qualification-stratum-2
+derived_from: pilot/v1.1.0-rc/manifest.yaml
+frozen_at: 2026-08-17T05:36:19Z
+status: frozen-before-model-outcomes
+amendment: pilot/v1.1.0-rc2/amendment.md
+rc1_evidence:
+  manifest_sha256: 5861383dae16e01aea5ae817a8fc2494f753121e76abc59f5edcf5fa476a5ce3
+  fd001_ledger: /Users/drewcook/Documents/Projects/forge-pilot-v1.1.0-rc/fd/.forge/forge.db
+  fd001_run_id: R-0001
+  outcome: infrastructure_error
+  classification: ContainedEvaluatorCredentialCoupling
+  historical_records_unchanged: true
+forge:
+  version: 1.1.0
+  starting_commit: be770b858e3aeff90618494b4fc0d133333527ef
+  qualification_tree: uncommitted-human-review
+  remediation_source_scope: crates
+  remediation_patch_sha256: 0338a65d3489e5d7972cd0ce7abd6b6f9a91f53d9bfd3ce8652e853728f884f4
+  commit_deferred_by_instruction: true
+sandbox:
+  image: localhost:5000/forge/pilot-runtime@sha256:5c6bbe37ffb3f0e51e40a80bfea9f7c19d47287dc513da27e5c8615d98a3cc5d
+  image_id: sha256:6030aabed0855786f9688b56a4e29d624f88c36b6638d9e71f7fa3bf35f412c9
+  platform: linux/arm64
+  build_definition: pilot/v1.1.0-rc2/runtime/Dockerfile
+  build_definition_sha256: e3f7dba682f2fdf2c140ed330bf41a76295edde756f98f3be8740da8553d134a
+  codex_wrapper_sha256: 09994274eadb0e0932453539401805bdd9791eaecdadf7c5177eb8b919c71c60
+  runtimes:
+    rustc: 1.93.1
+    cargo: 1.93.1
+    node: 24.19.0
+    pnpm: 10.12.1
+    python: 3.11.2
+    git: 2.39.5
+    claude: 2.1.223
+    codex: 0.147.0
+containment:
+  mode: required
+  fallback: forbidden
+  invocation_credentials: explicit-required-names-default-empty
+  configured_credential_env_semantics: per-command-allowlist
+  command_container_lifecycle: fresh-container-per-command-mandatory-cleanup
+  evaluator_credentials: none
+  evaluator_inherits_agent_environment: false
+  root_filesystem: read-only
+  home: private per-command /home/forge tmpfs
+  tmp: private per-command 1 GiB tmpfs
+  mounts: candidate worktree writable; Git common directory read-only
+  excluded_mounts: [primary_worktree, host_home, host_ssh, host_aws, host_config, host_codex, host_claude]
+  cpu_millis: 2000
+  memory_bytes: 4294967296
+  pids_limit: 256
+  workspace_limit_bytes: 21474836480
+  minimum_free_bytes: 1073741824
+  minimum_free_percent: 10
+  emergency_free_bytes: 536870912
+  disk_watch_interval_secs: 5
+  timeout_secs: 1800
+network:
+  policy: allowed
+  rationale: provider APIs and reproducible dependency installation require egress
+  forge_enforced: explicit ordinary Docker bridge selection
+  operator_managed_limitation: destination allowlisting is not enforced by Forge
+credentials:
+  source: current process environment only
+  host_login_fallback: forbidden
+  host_credential_mounts: forbidden
+  claude: [ANTHROPIC_API_KEY]
+  codex: [CODEX_API_KEY]
+profiles:
+  - { path: pilot/v1.1.0-rc2/profiles/fd-claude.toml, sha256: fc9210a38c859acfdaa5c508ab07e0af8bc3f4478e0888d293ca08c19a9e7290 }
+  - { path: pilot/v1.1.0-rc2/profiles/httpx-codex.toml, sha256: ba4923b4f2f60f3b5104d9cd7695ad7bf82a8410d8c04d27f457fd6756e5270e }
+  - { path: pilot/v1.1.0-rc2/profiles/zod-claude.toml, sha256: f65121977a0a8a6be4848f6cf8c6c1d64a98f3ad5651df597c0a6845ecd5d79f }
+repositories:
+  - id: fd
+    path: /Users/drewcook/Documents/Projects/forge-pilot-v1.1.0-rc2/fd
+    url: https://github.com/sharkdp/fd.git
+    commit: ee20f426ddf338ac7ead5c5f00ea49258005caaf
+    ecosystem: Rust
+    baseline: "PASS: 268 tests"
+  - id: httpx
+    path: /Users/drewcook/Documents/Projects/forge-pilot-v1.1.0-rc2/httpx
+    url: https://github.com/encode/httpx.git
+    commit: b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+    ecosystem: Python
+    baseline: "KNOWN FAILURE: 1416 passed, 1 skipped, Trio test_write_timeout ResourceWarning"
+  - id: zod
+    path: /Users/drewcook/Documents/Projects/forge-pilot-v1.1.0-rc2/zod
+    url: https://github.com/colinhacks/zod.git
+    commit: 9f0a3d81221e3ab7c09ca4911ef35b54817869a4
+    ecosystem: TypeScript
+    baseline: "FUNCTIONAL PASS: 4358 passed; one attw packaging snapshot cannot execute npm pack in hardened image"
+routing:
+  mode: recommendation-shadow-only
+  execution_authority: preregistered explicit agent
+  minimum_score_margin: 0.05
+  automatic_routing: false
+  holdout_consumed: false
+  automatic_merge: false
+  automatic_policy_promotion: false
+  automatic_team_dispatch: false
+  effective_configuration_fingerprints:
+    fd: { claude: fd46e6bb99f26d75, codex: 9b65105b8b260a03 }
+    httpx: { claude: 6864a7955d174454, codex: 024de3efb0551e30 }
+    zod: { claude: 52ceeb682402a0ec, codex: 7f623f282790dc54 }
+tasks:
+  - { id: F-PILOT-FD-001, source: pilot/v1.1.0-rc/tasks/fd/F-PILOT-FD-001.yaml, agent: claude, category: correctness, sha256: 3453fcc112325e709b9f360733d966a089a9faccf21987d8965716c74d7018a9 }
+  - { id: F-PILOT-FD-002, source: pilot/v1.1.0-rc/tasks/fd/F-PILOT-FD-002.yaml, agent: claude, category: debugging, sha256: 64c43a4d0219492577690d5e738aa1df87667100bf1a6e74e71a3344540ce27b }
+  - { id: F-PILOT-FD-003, source: pilot/v1.1.0-rc/tasks/fd/F-PILOT-FD-003.yaml, agent: claude, category: feature, sha256: 51b82deb24ed0b2a37dccfd47300f63960b899c6a8f30c904252405b13e5acaf }
+  - { id: F-PILOT-HTTPX-001, source: pilot/v1.1.0-rc/tasks/httpx/F-PILOT-HTTPX-001.yaml, agent: codex, category: debugging, sha256: 45e099577c020b90de3cb1d5aa4464df8408b74679fb9944ea220146a4f14f18 }
+  - { id: F-PILOT-HTTPX-002, source: pilot/v1.1.0-rc/tasks/httpx/F-PILOT-HTTPX-002.yaml, agent: codex, category: correctness, sha256: a1ae3b4505515e861e9727972aba2b5af0bb3dc38e0f14c8dcc869714da39d8b }
+  - { id: F-PILOT-HTTPX-003, source: pilot/v1.1.0-rc/tasks/httpx/F-PILOT-HTTPX-003.yaml, agent: codex, category: feature, sha256: 18e18ef141412ef6f7764db5ab13f13b90407b912b593fb3bd1a05d5ea7c7a13 }
+  - { id: F-PILOT-ZOD-001, source: pilot/v1.1.0-rc/tasks/zod/F-PILOT-ZOD-001.yaml, agent: claude, category: feature, sha256: 4ba93aa74390041a3fc53e846b8405e186bf65b379fb41c7afba4a59464c28bb }
+  - { id: F-PILOT-ZOD-002, source: pilot/v1.1.0-rc/tasks/zod/F-PILOT-ZOD-002.yaml, agent: claude, category: feature, sha256: 4c97d73d38b5421522d23102310fe50f68551b838e8c5f8de88da51e561c7b20 }
+  - { id: F-PILOT-ZOD-003, source: pilot/v1.1.0-rc/tasks/zod/F-PILOT-ZOD-003.yaml, agent: claude, category: correctness, sha256: 97620ff13f28aaf9b8c94d90e62234a4a85159ca401693bf4a64b4d5e50be0aa }
+router_shadow_observations:
+  - { task: F-PILOT-FD-001, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.343872Z, evidence: 63941c03b5beca0117b1f96b400dbbd158efd42ba58b8a8fb2d91aa2dd487502 }
+  - { task: F-PILOT-FD-002, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.384836Z, evidence: ac761bf09dca3b17cb72a9ffde8a5fd26d637be17ea9323284d50a5ab687f7f9 }
+  - { task: F-PILOT-FD-003, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.420997Z, evidence: 1ed78b46a13d9295884f4e42781b8684b2578d2bca46785cbf5466c700d6fed4 }
+  - { task: F-PILOT-HTTPX-001, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.457468Z, evidence: 6512b6a3e23ccb0a52789e5da72aa4fab4fe1f5f38cbe673df2797cf8817668d }
+  - { task: F-PILOT-HTTPX-002, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.491185Z, evidence: 4a4f5da65a35b1b41d4ab3d6fb8dfe7c3566504a0890355f459c09123e6ac38a }
+  - { task: F-PILOT-HTTPX-003, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.525046Z, evidence: b0d2e6a8018d905185bdb1a2f5f54c0498218ed6cdd15ba36d10c9e2a67e797f }
+  - { task: F-PILOT-ZOD-001, decision: RD-0001, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.560034Z, evidence: 43c251125da204cd97b4da0ec27b9e70575e9aa628edb4d97fa203f067d9188e }
+  - { task: F-PILOT-ZOD-002, decision: RD-0002, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.593514Z, evidence: 7c3ac6d4897d1cdc2d4f5c439d0450783b02f8c2d259037880e5fcab9279b62a }
+  - { task: F-PILOT-ZOD-003, decision: RD-0003, result: insufficient_evidence, margin: 0.0, cutoff: 2026-08-17T05:36:19.627099Z, evidence: 252caf82466bf4fd98d9da4dffa8fb2e31e54202040cc3173aa82fad3cbf0050 }
+evidence_fields: [run_outcome, integrity_status, agent_runtime, forge_total_runtime, provider_tokens, provider_cost_or_credits, patch_size, evaluator_metrics, resource_events, sandbox_events, cleanup_state, backup_state, router_shadow_decision, effective_configuration_fingerprint]
+retention:
+  mandatory_durable_days: 365
+  agent_streams_days: 30
+  provider_raw_streams_days: 30
+  failed_workspaces_days: 7
+  successful_workspaces: cleanup_after_durable_capture
+  build_cache: cleanup_before_disk_preflight
+  archive_threshold_free_percent: 10
+  approval: proposed-human-approval-required
+rollback:
+  deployment_unit: previous_binary-plus-version-matched-config-plus-pre-upgrade-db-backup-when-required
+  config_files_are_versioned_deployment_artifacts: true
+acceptance:
+  attempts_required: 9
+  independently_resolved_forge_outcomes_required: 9
+  critical_failure_drills: all-pass
+  contained_evaluator_without_provider_credentials: mandatory-pass
+  doctor: all-profiles-green
+  infrastructure_failures: 0
+  production_class_defects: 0
+  disk_preflight_minimum_percent: 10
+  remote_ci: green-or-release-blocked
+qualification_drill_sources:
+  production_plan: { path: validation/external-pilot/plan.json, sha256: 95be71c73a7c7784c62ba3dada115593c633b3b46015e07d9591cca1b9f2fbf1 }
+  production_validator: { path: scripts/validate-pilot.py, sha256: e1b05f8c12967d03fc4b8bec7b2dcfb0e1dd7e57d43c32739145fe20c7b609b0 }
+  checked_in_docker_ci: { path: .github/workflows/ci.yml, sha256: 2278adb596ee17c7a4e6ed7edc337f3857f9589835aa7296b4f75a4eb2fa6a9d }
+failure_drills: [interrupted_subprocess, provider_failure, timeout, low_disk, memory_limit, missing_runtime, network_disabled, missing_credential, contained_evaluator_without_provider_credentials, sqlite_backup, sqlite_restore, migration_upgrade, fingerprint_drift, stale_harness, failed_run_cleanup]
+stopping_rules:
+  - stop before any model run unless doctor, frozen manifest, local release gate, critical drills, and disk preflight are green
+  - stop immediately on credential inheritance into an evaluator
+  - stop on escape, secret exposure, uncontained execution, corruption, evidence loss, contamination, false integrity pass, migration damage, cleanup failure, or resource misclassification
+  - stop before merge, tag, push, publication, or release creation for human review

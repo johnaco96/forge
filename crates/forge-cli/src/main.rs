@@ -44,8 +44,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Run read-only repository, store, capacity, sandbox, and agent preflight checks.
-    Doctor,
+    /// Run repository, store, capacity, sandbox, and agent preflight checks.
+    Doctor {
+        /// Execute a bounded, real provider probe in a disposable workspace.
+        #[arg(long)]
+        live_agent_probe: bool,
+
+        /// Agent to probe. Defaults to `defaults.agent`.
+        #[arg(long, value_name = "AGENT", requires = "live_agent_probe")]
+        probe_agent: Option<String>,
+
+        /// Wall-clock budget for the live provider probe.
+        #[arg(
+            long,
+            value_name = "SECONDS",
+            default_value_t = 180,
+            requires = "live_agent_probe"
+        )]
+        probe_timeout_secs: u64,
+    },
 
     /// Prepare this repository for Forge.
     Init {
@@ -440,8 +457,18 @@ const EXIT_ROUTING_STOPPED: u8 = 3;
 
 async fn dispatch(cli: Cli) -> anyhow::Result<std::process::ExitCode> {
     match cli.command {
-        Command::Doctor => {
-            let result = commands::doctor::run(cli.repo).await?;
+        Command::Doctor {
+            live_agent_probe,
+            probe_agent,
+            probe_timeout_secs,
+        } => {
+            let result = commands::doctor::run(commands::doctor::DoctorArgs {
+                repo: cli.repo,
+                live_agent_probe,
+                probe_agent,
+                probe_timeout_secs,
+            })
+            .await?;
             Ok(match result {
                 commands::doctor::DoctorExit::Ready => std::process::ExitCode::SUCCESS,
                 commands::doctor::DoctorExit::NotReady => {

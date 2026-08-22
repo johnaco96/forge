@@ -1,8 +1,9 @@
 //! Consistent SQLite backup, verification, and staged restore.
 
+use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 
+use fs2::FileExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 use crate::{Store, StoreError, StoreResult};
@@ -48,7 +49,11 @@ impl Store {
                     "backup verification failed: {verification:?}"
                 )));
             }
-            std::fs::rename(&staging, destination).map_err(|source| StoreError::Io {
+            // A prior existence check is not a publication primitive: ordinary
+            // rename overwrites on Unix if another process creates the target
+            // in between. Staging is a sibling, so a hard link gives us an
+            // atomic no-clobber install on the same filesystem.
+            std::fs::hard_link(&staging, destination).map_err(|source| StoreError::Io {
                 context: format!(
                     "publishing verified backup {} as {}",
                     staging.display(),
@@ -56,6 +61,10 @@ impl Store {
                 ),
                 source,
             })?;
+            // The published link is already complete and durable evidence. A
+            // hidden staging link left by an unusual cleanup failure is safe
+            // and can be removed by an operator later.
+            let _ = std::fs::remove_file(&staging);
             Ok(verification)
         }
         .await;
@@ -70,13 +79,22 @@ impl Store {
     /// readability without migrating or mutating the file.
     pub async fn verify_file(path: impl AsRef<Path>) -> StoreResult<StoreVerification> {
         let path = path.as_ref();
+        // Verification must work for an immutable backup on read-only media.
+        // When a Forge sidecar already exists, share it; do not create one for
+        // an arbitrary file merely because it is being inspected.
+        let _lock = acquire_existing_shared_lock(path)?;
+        Self::verify_file_unlocked(path).await
+    }
+
+    async fn verify_file_unlocked(path: &Path) -> StoreResult<StoreVerification> {
         if !path.is_file() {
             return Err(StoreError::NotFound(format!(
                 "store file `{}`",
                 path.display()
             )));
         }
-        let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))?
+        let options = SqliteConnectOptions::new()
+            .filename(path)
             .read_only(true)
             .create_if_missing(false)
             .foreign_keys(true);
@@ -122,6 +140,8 @@ impl Store {
                 "backup source and restore destination are the same path".into(),
             ));
         }
+        prepare_parent(destination)?;
+        let _destination_lock = acquire_store_lock(destination, true)?;
         let source_verification = Self::verify_file(source).await?;
         if !source_verification.is_usable() {
             return Err(StoreError::Corrupt(format!(
@@ -134,7 +154,6 @@ impl Store {
                 destination.display()
             )));
         }
-        prepare_parent(destination)?;
         let staging = partial_path(destination, "restore");
         let rollback = partial_path(destination, "rollback");
         remove_if_exists(&staging)?;
@@ -176,7 +195,7 @@ impl Store {
                 });
             }
 
-            match Self::verify_file(destination).await {
+            match Self::verify_file_unlocked(destination).await {
                 Ok(installed) if installed == verification => {
                     remove_if_exists(&rollback)?;
                     Ok(installed)
@@ -209,8 +228,76 @@ impl Store {
     }
 }
 
+pub(crate) fn acquire_store_lock(path: &Path, exclusive: bool) -> StoreResult<File> {
+    let lock_path = store_lock_path(path);
+    if let Some(parent) = lock_path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|source| StoreError::Io {
+            context: format!("creating store lock directory `{}`", parent.display()),
+            source,
+        })?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|source| StoreError::Io {
+            context: format!("opening store lock `{}`", lock_path.display()),
+            source,
+        })?;
+    let result = if exclusive {
+        FileExt::try_lock_exclusive(&file)
+    } else {
+        FileExt::try_lock_shared(&file)
+    };
+    match result {
+        Ok(()) => Ok(file),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(StoreError::Busy {
+            path: path.display().to_string(),
+        }),
+        Err(source) => Err(StoreError::Io {
+            context: format!("locking store `{}`", path.display()),
+            source,
+        }),
+    }
+}
+
+fn acquire_existing_shared_lock(path: &Path) -> StoreResult<Option<File>> {
+    let lock_path = store_lock_path(path);
+    let file = match OpenOptions::new().read(true).open(&lock_path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(StoreError::Io {
+                context: format!("opening store lock `{}`", lock_path.display()),
+                source,
+            });
+        }
+    };
+    match FileExt::try_lock_shared(&file) {
+        Ok(()) => Ok(Some(file)),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Err(StoreError::Busy {
+            path: path.display().to_string(),
+        }),
+        Err(source) => Err(StoreError::Io {
+            context: format!("locking store `{}`", path.display()),
+            source,
+        }),
+    }
+}
+
+fn store_lock_path(path: &Path) -> PathBuf {
+    let mut native = path.as_os_str().to_os_string();
+    native.push(".lock");
+    PathBuf::from(native)
+}
+
 async fn vacuum_file_into(source: &Path, destination: &Path) -> StoreResult<()> {
-    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", source.display()))?
+    let options = SqliteConnectOptions::new()
+        .filename(source)
         .read_only(true)
         .create_if_missing(false);
     let pool = SqlitePoolOptions::new()
@@ -342,6 +429,10 @@ mod tests {
 
         let backup = active.backup_to(&backup_path).await.unwrap();
         assert_eq!(backup.run_count, 1);
+        assert!(
+            !store_lock_path(&backup_path).exists(),
+            "verifying a portable backup must not create a sidecar"
+        );
         active.save_run(&run(2), None).await.unwrap();
         assert_eq!(active.run_count().await.unwrap(), 2);
 
@@ -372,6 +463,30 @@ mod tests {
         );
         let reopened = Store::open(&existing_path).await.unwrap();
         assert_eq!(reopened.run_count().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn restore_refuses_to_switch_a_store_held_by_an_active_forge_process() {
+        let temp = tempfile::tempdir().unwrap();
+        let source_path = temp.path().join("source.db");
+        let backup_path = temp.path().join("backup.db");
+        let destination_path = temp.path().join("destination.db");
+        let source = Store::open(&source_path).await.unwrap();
+        source.upsert_task(&task()).await.unwrap();
+        source.save_run(&run(1), None).await.unwrap();
+        source.backup_to(&backup_path).await.unwrap();
+
+        let destination = Store::open(&destination_path).await.unwrap();
+        let error = Store::restore_from(&backup_path, &destination_path, true)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, StoreError::Busy { .. }), "{error}");
+
+        destination.close().await;
+        let restored = Store::restore_from(&backup_path, &destination_path, true)
+            .await
+            .unwrap();
+        assert_eq!(restored.run_count, 1);
     }
 
     #[tokio::test]

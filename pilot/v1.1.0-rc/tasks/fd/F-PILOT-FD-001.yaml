@@ -1,0 +1,18 @@
+task_id: F-PILOT-FD-001
+repository: fd
+objective: >-
+  Preserve the exact bytes of Unix path names when --format is used on piped
+  output. A path containing invalid UTF-8 must not be silently rewritten with
+  replacement characters, while existing formatting placeholders and normal
+  UTF-8 behavior remain compatible.
+constraints:
+  - Add deterministic regression coverage for invalid UTF-8 on Unix
+  - Do not change ordinary unformatted output semantics
+  - Keep all existing tests passing
+protected_paths: ["Cargo.lock", "LICENSE-*", "CONTRIBUTING.md", "AI_POLICY.md"]
+evaluation:
+  tests: { command: "cargo test --locked", timeout_secs: 1200 }
+  lint: { command: "cargo fmt --all -- --check && cargo clippy --locked --all-targets -- -D warnings", timeout_secs: 1200 }
+classification: { category: correctness, language: rust, domain: output, difficulty: medium }
+components: ["src/output.rs", "tests"]
+tags: ["pilot-v1.1.0-rc", "unix", "encoding"]

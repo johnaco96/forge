@@ -17,8 +17,16 @@ pub mod prompt;
 pub mod registry;
 
 pub use adapter::{AgentAdapter, RunContext};
-pub use claude::ClaudeAdapter;
-pub use codex::CodexAdapter;
+pub use claude::{
+    ClaudeAdapter, EXECUTION_PROTOCOL_SETTING as CLAUDE_EXECUTION_PROTOCOL_SETTING,
+    NATIVE_EXECUTION_PROTOCOL as CLAUDE_NATIVE_EXECUTION_PROTOCOL,
+    OUTER_OCI_EXECUTION_PROTOCOL as CLAUDE_OUTER_OCI_EXECUTION_PROTOCOL,
+};
+pub use codex::{
+    CodexAdapter, EXECUTION_PROTOCOL_SETTING as CODEX_EXECUTION_PROTOCOL_SETTING,
+    NATIVE_EXECUTION_PROTOCOL as CODEX_NATIVE_EXECUTION_PROTOCOL,
+    OUTER_OCI_EXECUTION_PROTOCOL as CODEX_OUTER_OCI_EXECUTION_PROTOCOL,
+};
 pub use error::{AgentError, AgentResult};
 pub use prompt::{build_agent_prompt, build_agent_prompt_with_context};
 pub use registry::{AgentRegistry, Availability};

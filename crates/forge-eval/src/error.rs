@@ -9,6 +9,9 @@ pub enum EvalError {
     #[error("check `{check}` could not be measured: {reason}")]
     NotMeasurable { check: String, reason: String },
 
+    #[error("check `{check}` was cancelled by the operator")]
+    Cancelled { check: String },
+
     #[error(transparent)]
     Exec(#[from] forge_executor::ExecError),
 }

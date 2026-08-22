@@ -1,0 +1,25 @@
+task_id: F-PILOT-HTTPX-002
+repository: httpx
+objective: >-
+  Make Response.links parse RFC-style quoted Link-header parameters containing
+  semicolons, commas, and escaped quotes without corrupting values or splitting
+  one link into several. Multiple ordinary links must remain compatible.
+constraints:
+  - Add focused cases to existing tests
+  - Do not add a third-party parser dependency
+  - Preserve the existing Response.links return shape
+protected_paths: ["requirements.txt", "LICENSE.md", ".github/**"]
+evaluation:
+  tests:
+    command: "python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && .pilot-venv/bin/pytest -q tests/models/test_responses.py tests/models/test_headers.py"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+  lint:
+    command: 'python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && PATH="$PWD/.pilot-venv/bin:$PATH" ./scripts/check'
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+classification: { category: correctness, language: python, domain: headers, difficulty: medium }
+components: ["httpx/_models.py", "tests/models/test_responses.py", "tests/models/test_headers.py"]
+tags: ["pilot-v1.1.0-rc", "link-header"]

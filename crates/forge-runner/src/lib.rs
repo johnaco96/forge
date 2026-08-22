@@ -39,9 +39,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use forge_agent::adapter::{AgentAdapter, RunContext};
+use forge_agent::{
+    CLAUDE_EXECUTION_PROTOCOL_SETTING, CLAUDE_NATIVE_EXECUTION_PROTOCOL,
+    CLAUDE_OUTER_OCI_EXECUTION_PROTOCOL, CODEX_EXECUTION_PROTOCOL_SETTING,
+    CODEX_NATIVE_EXECUTION_PROTOCOL, CODEX_OUTER_OCI_EXECUTION_PROTOCOL,
+};
 use forge_core::agent::AgentConfig;
 use forge_core::config::{ForgeConfig, Layout};
-use forge_core::events::{EventPayload, EventSink, RecordingSink};
+use forge_core::events::{EventPayload, EventSink, RecordingSink, WorkspaceDisposition};
 use forge_core::experiment::{
     Comparison, ComparisonInput, Experiment, ExperimentEventPayload, ExperimentRecordingSink,
 };
@@ -54,10 +59,10 @@ use forge_core::patch::{PatchPolicy, PatchWarning};
 use forge_core::policy::{EngineeringPolicy, ExecutionStrategy, PolicyBounds};
 use forge_core::result::{Evaluation, Verdict};
 use forge_core::run::{
-    AgentExecution, AgentRun, ExecutionProvenance, PatchSummary, RunOutcome, RunStatus,
-    SelectionSource,
+    AgentExecution, AgentExecutionStatus, AgentRun, ExecutionProvenance, InfrastructureFailure,
+    InfrastructureFailureKind, PatchSummary, RunOutcome, RunStatus, SelectionSource,
 };
-use forge_core::security::SecurityPosture;
+use forge_core::security::{ExecutionSandboxConfig, SecurityPosture};
 use forge_core::task::EngineeringTask;
 use forge_core::workspace::Workspace;
 use forge_core::world::WorldModelContext;
@@ -65,9 +70,9 @@ use forge_eval::{EvalContext, EvaluationEngine, EvaluationPlan};
 use forge_executor::{
     DiskPreflightPolicy, DiskWatch, DockerSandbox, EnvPolicy, ExecutionSandbox, ProcessRunner,
     WorkspaceProvider, WorktreeProvider, capture_candidate_patch, preflight_disk,
-    preflight_sandbox_config,
+    preflight_sandbox_config, preflight_sandbox_evaluator_tool,
 };
-use forge_git::Repository;
+use forge_git::{Repository, validate_worktree_git_link, workspace_contains_secret};
 use forge_policy::{ensure_bootstrap_policy, resolve_execution_policy};
 use forge_store::Store;
 
@@ -304,6 +309,38 @@ impl Runner {
                 .settings
                 .insert("extra_args".to_string(), settings.extra_args.join(" "));
         }
+        if request.agent_id == "codex" {
+            let protocol = if matches!(
+                config.sandbox,
+                forge_core::security::ExecutionSandboxConfig::Required { .. }
+            ) {
+                CODEX_OUTER_OCI_EXECUTION_PROTOCOL
+            } else {
+                CODEX_NATIVE_EXECUTION_PROTOCOL
+            };
+            // Adapter execution semantics are part of evidence identity. In
+            // particular, an outer-OCI Codex observation must never pool with
+            // a native Codex-sandbox observation merely because both use the
+            // same model and CLI version.
+            config.settings.insert(
+                CODEX_EXECUTION_PROTOCOL_SETTING.to_string(),
+                protocol.to_string(),
+            );
+        }
+        if request.agent_id == "claude" {
+            let protocol = if matches!(
+                config.sandbox,
+                forge_core::security::ExecutionSandboxConfig::Required { .. }
+            ) {
+                CLAUDE_OUTER_OCI_EXECUTION_PROTOCOL
+            } else {
+                CLAUDE_NATIVE_EXECUTION_PROTOCOL
+            };
+            config.settings.insert(
+                CLAUDE_EXECUTION_PROTOCOL_SETTING.to_string(),
+                protocol.to_string(),
+            );
+        }
         config.settings.insert(
             "forge.world_model_configuration".into(),
             format!(
@@ -484,6 +521,21 @@ impl Runner {
         Ok(())
     }
 
+    /// Fails closed before a run workspace or agent process exists when the
+    /// frozen evaluator plan cannot run in the configured substrate.
+    async fn preflight_evaluation_plan(&self, plan: &EvaluationPlan) -> RunnerResult<()> {
+        preflight_sandbox_config(&self.config.containment).await?;
+        for prerequisite in plan.prerequisites() {
+            preflight_sandbox_evaluator_tool(
+                &self.config.containment,
+                &prerequisite.evaluator_id,
+                &prerequisite.requirement,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
     /// Executes the ordinary run pipeline from an already-resolved base.
     async fn execute_resolved(
         &self,
@@ -521,6 +573,7 @@ impl Runner {
         // Resolve trusted evaluation configuration before any candidate code
         // executes. The resulting plan is never rebuilt from the workspace.
         let evaluation_plan = EvaluationPlan::resolve(&request.task);
+        self.preflight_evaluation_plan(&evaluation_plan).await?;
         let world_model = if self.config.world_model.enabled {
             self.store
                 .world_context_for_policy(
@@ -704,45 +757,33 @@ impl Runner {
                 self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
                     .await?;
                 let failed_workspace = workspace_from_run(&run);
-                let should_keep = failed_workspace.is_some()
-                    && (keep_workspace || self.config.workspaces.keep_on_failure);
-                if let Some(workspace) = &failed_workspace
-                    && !should_keep
-                    && let Ok(provider) = self.provider(false)
-                    && let Err(cleanup) = provider.teardown(workspace)
-                {
-                    tracing::warn!(%cleanup, "could not remove failed workspace");
-                }
+                let workspace_kept = self.apply_workspace_retention(
+                    failed_workspace.as_ref(),
+                    &mut run,
+                    keep_workspace,
+                    &sink,
+                );
+                self.persist_workspace_disposition(&run, &sink, experiment_id)
+                    .await?;
                 return Ok(self.report(
                     run,
                     None,
-                    should_keep.then_some(failed_workspace).flatten(),
-                    should_keep,
+                    workspace_kept.then_some(failed_workspace).flatten(),
+                    workspace_kept,
                     base_was_dirty,
                     &sink,
                 ));
             }
         };
 
-        // Tear down only on a clean pipeline: a failed run's workspace is the
-        // most useful thing to look at, and the branch alone does not preserve
-        // the state the agent left behind.
-        let outcome = run.outcome.unwrap_or(RunOutcome::Errored);
-        let should_keep = keep_workspace || outcome == RunOutcome::Errored;
-        if let Some(workspace) = &workspace
-            && !should_keep
-        {
-            match self.provider(keep_workspace) {
-                Ok(provider) => {
-                    if let Err(err) = provider.teardown(workspace) {
-                        tracing::warn!(%err, "could not remove workspace");
-                    }
-                }
-                Err(err) => tracing::warn!(%err, "could not build workspace provider"),
-            }
-        }
-
+        // Durable candidate/evaluator evidence is committed before disposable
+        // workspace cleanup. A second idempotent event flush below records the
+        // observed kept/removed/failed disposition.
         self.persist(&run, evaluation.as_ref(), &sink, experiment_id)
+            .await?;
+        let workspace_kept =
+            self.apply_workspace_retention(workspace.as_ref(), &mut run, keep_workspace, &sink);
+        self.persist_workspace_disposition(&run, &sink, experiment_id)
             .await?;
         self.record_policy_experiment_observation(&run, policy.experiment.as_ref())
             .await?;
@@ -750,8 +791,8 @@ impl Runner {
         Ok(self.report(
             run,
             evaluation,
-            workspace,
-            should_keep,
+            workspace_kept.then_some(workspace).flatten(),
+            workspace_kept,
             base_was_dirty,
             &sink,
         ))
@@ -828,6 +869,22 @@ impl Runner {
             }
         }
 
+        // A provider process necessarily receives one job-scoped credential.
+        // Before any candidate bytes are staged, committed, or written as a
+        // patch artifact, prove that exact value did not cross into the
+        // disposable workspace. A match is deliberately reported without its
+        // value or path and forces workspace destruction on the failure path.
+        let credentials = configured_credential_values(&run.agent.sandbox);
+        if workspace_contains_secret(&workspace.path, &run.base_commit, &credentials)? {
+            return Err(RunnerError::Exec(
+                InfrastructureFailure::new(
+                    InfrastructureFailureKind::CredentialPolicyViolation,
+                    "candidate workspace contains an invocation credential; durable capture is blocked and the disposable workspace must be destroyed",
+                )
+                .into(),
+            ));
+        }
+
         // 3. Read the change out of Git. Everything below this line is measured.
         let (patch, integrity, warnings) = self.capture(
             &workspace,
@@ -839,6 +896,19 @@ impl Runner {
         run.patch = Some(patch);
         run.integrity = Some(integrity);
         run.warnings = warnings;
+
+        if run
+            .execution
+            .as_ref()
+            .is_some_and(|execution| execution.status == AgentExecutionStatus::Cancelled)
+        {
+            run.outcome = Some(RunOutcome::Errored);
+            inputs.sink.emit(EventPayload::RunCancelled {
+                reason: Some("agent execution cancelled by operator".into()),
+            });
+            run.transition_to(RunStatus::Cancelled)?;
+            return Ok((None, Some(workspace)));
+        }
 
         // 4. Forge's own evaluation.
         run.transition_to(RunStatus::Evaluating)?;
@@ -856,6 +926,19 @@ impl Runner {
             );
         }
         run.evaluation_verdict = evaluation.as_ref().map(|e| e.verdict);
+
+        if evaluation.as_ref().is_some_and(|evaluation| {
+            evaluation.checks.iter().any(|check| {
+                check.execution_status == forge_core::result::EvaluatorExecutionStatus::Cancelled
+            })
+        }) {
+            run.outcome = Some(RunOutcome::Errored);
+            inputs.sink.emit(EventPayload::RunCancelled {
+                reason: Some("evaluation cancelled by operator".into()),
+            });
+            run.transition_to(RunStatus::Cancelled)?;
+            return Ok((evaluation, Some(workspace)));
+        }
 
         // 5. Conclude.
         let outcome = run.finalize_outcome();
@@ -880,6 +963,7 @@ impl Runner {
         artifacts_dir: &Path,
         sink: &RecordingSink,
     ) -> RunnerResult<(PatchSummary, EvaluationIntegrity, Vec<PatchWarning>)> {
+        validate_worktree_git_link(workspace.path.as_path(), &self.repository.git_common_dir()?)?;
         let diff_path = artifacts_dir.join("patch.diff");
         let message = format!("forge {}: {}", run.run_id, run.task_id);
         let mut policy = PatchPolicy::default();
@@ -998,6 +1082,87 @@ impl Runner {
         Ok(())
     }
 
+    async fn persist_workspace_disposition(
+        &self,
+        run: &AgentRun,
+        sink: &RecordingSink,
+        experiment_id: Option<&ExperimentId>,
+    ) -> RunnerResult<()> {
+        self.store.save_run(run, experiment_id).await?;
+        self.store.append_events(&sink.events()).await?;
+        Ok(())
+    }
+
+    fn apply_workspace_retention(
+        &self,
+        workspace: Option<&Workspace>,
+        run: &mut AgentRun,
+        keep_after_run: bool,
+        sink: &RecordingSink,
+    ) -> bool {
+        let Some(workspace) = workspace else {
+            return false;
+        };
+        let keep = !requires_forced_workspace_destruction(run)
+            && should_keep_workspace(
+                run.outcome,
+                run.status,
+                run.execution.as_ref().map(|execution| execution.status),
+                keep_after_run,
+                self.config.workspaces.keep_on_failure,
+            );
+        if keep {
+            if workspace.path.is_dir() {
+                sink.emit(EventPayload::WorkspaceDispositionRecorded {
+                    path: workspace.path.clone(),
+                    disposition: WorkspaceDisposition::Kept,
+                    detail: workspace_retention_reason(run, keep_after_run),
+                });
+                return true;
+            }
+            record_workspace_cleanup_failure(
+                run,
+                sink,
+                workspace,
+                "retention policy selected keep, but the workspace is missing".into(),
+            );
+            return false;
+        }
+
+        let cleanup = self
+            .provider(false)
+            .and_then(|provider| provider.teardown(workspace).map_err(Into::into));
+        match cleanup {
+            Ok(()) if !workspace.path.exists() => {
+                sink.emit(EventPayload::WorkspaceDispositionRecorded {
+                    path: workspace.path.clone(),
+                    disposition: WorkspaceDisposition::Removed,
+                    detail: "workspace removed after durable evidence capture".into(),
+                });
+                false
+            }
+            Ok(()) => {
+                record_workspace_cleanup_failure(
+                    run,
+                    sink,
+                    workspace,
+                    "cleanup returned success, but the workspace still exists".into(),
+                );
+                true
+            }
+            Err(error) => {
+                tracing::warn!(%error, "could not remove workspace");
+                record_workspace_cleanup_failure(
+                    run,
+                    sink,
+                    workspace,
+                    format!("workspace cleanup failed: {error}"),
+                );
+                workspace.path.exists()
+            }
+        }
+    }
+
     async fn record_policy_experiment_observation(
         &self,
         run: &AgentRun,
@@ -1034,8 +1199,9 @@ impl Runner {
         sink: &RecordingSink,
     ) -> RunReport {
         RunReport {
-            workspace_path: workspace
-                .map(|w| w.path)
+            workspace_path: workspace_kept
+                .then(|| workspace.map(|w| w.path))
+                .flatten()
                 .or_else(|| workspace_kept.then(|| run.workspace_path.clone()).flatten()),
             branch: run.branch.clone(),
             evaluation,
@@ -1045,6 +1211,23 @@ impl Runner {
             run,
         }
     }
+}
+
+fn configured_credential_values(config: &ExecutionSandboxConfig) -> Vec<String> {
+    let ExecutionSandboxConfig::Required { credential_env, .. } = config else {
+        return Vec::new();
+    };
+    credential_env
+        .iter()
+        .filter_map(|name| std::env::var(name).ok())
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+fn requires_forced_workspace_destruction(run: &AgentRun) -> bool {
+    run.infrastructure_failures
+        .iter()
+        .any(|failure| failure.kind == InfrastructureFailureKind::CredentialPolicyViolation)
 }
 
 /// Renders a failure together with everything that caused it.
@@ -1089,6 +1272,80 @@ fn workspace_from_run(run: &AgentRun) -> Option<Workspace> {
         run.branch.clone()?,
         run.base_commit.clone(),
     ))
+}
+
+/// Pure retention policy used by every success, failure, timeout, and
+/// cancellation cleanup path.
+///
+/// `keep_on_failure` means every terminal state other than an ordinary,
+/// completed PASS is retained. A timeout or cancellation remains diagnostic
+/// even if partial work happened to pass the configured checks.
+pub fn should_keep_workspace(
+    outcome: Option<RunOutcome>,
+    run_status: RunStatus,
+    execution_status: Option<AgentExecutionStatus>,
+    keep_after_run: bool,
+    keep_on_failure: bool,
+) -> bool {
+    if keep_after_run {
+        return true;
+    }
+    if !keep_on_failure {
+        return false;
+    }
+    if run_status != RunStatus::Completed {
+        return true;
+    }
+    if matches!(
+        execution_status,
+        Some(
+            AgentExecutionStatus::TimedOut
+                | AgentExecutionStatus::StartFailed
+                | AgentExecutionStatus::Cancelled
+        )
+    ) {
+        return true;
+    }
+    !matches!(outcome, Some(RunOutcome::Passed))
+}
+
+fn workspace_retention_reason(run: &AgentRun, keep_after_run: bool) -> String {
+    if keep_after_run {
+        return "workspace retention explicitly enabled for this run".into();
+    }
+    format!(
+        "keep_on_failure retained terminal status `{}` with outcome `{}` and agent status `{}`",
+        run.status,
+        run.outcome
+            .map(|outcome| outcome.as_str())
+            .unwrap_or("unknown"),
+        run.execution
+            .as_ref()
+            .map(|execution| execution.status.as_str())
+            .unwrap_or("not_started")
+    )
+}
+
+fn record_workspace_cleanup_failure(
+    run: &mut AgentRun,
+    sink: &RecordingSink,
+    workspace: &Workspace,
+    detail: String,
+) {
+    let failure = InfrastructureFailure::new(
+        InfrastructureFailureKind::WorkspaceCleanupFailed,
+        detail.clone(),
+    );
+    run.infrastructure_failures.push(failure.clone());
+    sink.emit(EventPayload::InfrastructureFailureObserved {
+        kind: failure.kind,
+        detail: failure.detail,
+    });
+    sink.emit(EventPayload::WorkspaceDispositionRecorded {
+        path: workspace.path.clone(),
+        disposition: WorkspaceDisposition::CleanupFailed,
+        detail,
+    });
 }
 
 fn remove_optional_stream(path: &mut Option<PathBuf>) {
@@ -1222,5 +1479,136 @@ mod tests {
             forge_executor::ExecError::Infrastructure(expected.clone()),
         ));
         assert_eq!(infrastructure_failure(&error), Some(&expected));
+    }
+
+    #[test]
+    fn keep_on_failure_retains_every_non_pass_terminal_outcome() {
+        for outcome in [
+            RunOutcome::Failed,
+            RunOutcome::Inconclusive,
+            RunOutcome::NoChange,
+            RunOutcome::Errored,
+        ] {
+            assert!(should_keep_workspace(
+                Some(outcome),
+                RunStatus::Completed,
+                Some(AgentExecutionStatus::Completed),
+                false,
+                true,
+            ));
+        }
+        assert!(!should_keep_workspace(
+            Some(RunOutcome::Passed),
+            RunStatus::Completed,
+            Some(AgentExecutionStatus::Completed),
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn keep_on_failure_retains_timeout_cancellation_and_infrastructure_error() {
+        assert!(should_keep_workspace(
+            Some(RunOutcome::Passed),
+            RunStatus::Completed,
+            Some(AgentExecutionStatus::TimedOut),
+            false,
+            true,
+        ));
+        assert!(should_keep_workspace(
+            None,
+            RunStatus::Cancelled,
+            Some(AgentExecutionStatus::Cancelled),
+            false,
+            true,
+        ));
+        assert!(should_keep_workspace(
+            Some(RunOutcome::Errored),
+            RunStatus::Failed,
+            Some(AgentExecutionStatus::StartFailed),
+            false,
+            true,
+        ));
+    }
+
+    #[test]
+    fn disabling_keep_on_failure_uses_the_normal_cleanup_policy() {
+        assert!(!should_keep_workspace(
+            Some(RunOutcome::Failed),
+            RunStatus::Completed,
+            Some(AgentExecutionStatus::Completed),
+            false,
+            false,
+        ));
+        assert!(should_keep_workspace(
+            Some(RunOutcome::Passed),
+            RunStatus::Completed,
+            Some(AgentExecutionStatus::Completed),
+            true,
+            false,
+        ));
+    }
+
+    #[test]
+    fn credential_policy_violations_override_every_workspace_retention_setting() {
+        let run_id = forge_core::ids::RunId::sequential(1);
+        let mut run = AgentRun::new(
+            run_id,
+            forge_core::ids::TaskId::sequential(1),
+            AgentConfig::new(AgentId::new("fixture").unwrap(), "fixture"),
+            "a73cf21",
+        );
+        run.infrastructure_failures.push(InfrastructureFailure::new(
+            InfrastructureFailureKind::CredentialPolicyViolation,
+            "redacted policy violation",
+        ));
+
+        assert!(requires_forced_workspace_destruction(&run));
+    }
+
+    #[test]
+    fn cleanup_failure_is_typed_and_never_recorded_as_removed() {
+        let run_id = forge_core::ids::RunId::sequential(1);
+        let mut run = AgentRun::new(
+            run_id.clone(),
+            forge_core::ids::TaskId::sequential(1),
+            AgentConfig::new(AgentId::new("fixture").unwrap(), "fixture"),
+            "a73cf21",
+        );
+        let workspace = Workspace::new(
+            run_id.clone(),
+            forge_core::workspace::WorkspaceKind::Worktree,
+            "/tmp/forge-cleanup-failure-fixture".into(),
+            "forge/R-0001",
+            "a73cf21",
+        );
+        let sink = RecordingSink::new(run_id);
+
+        record_workspace_cleanup_failure(
+            &mut run,
+            &sink,
+            &workspace,
+            "deterministic cleanup failure".into(),
+        );
+
+        assert!(
+            run.infrastructure_failures.iter().any(|failure| {
+                failure.kind == InfrastructureFailureKind::WorkspaceCleanupFailed
+            })
+        );
+        assert!(sink.events().iter().any(|event| matches!(
+            event.payload,
+            EventPayload::WorkspaceDispositionRecorded {
+                disposition: WorkspaceDisposition::CleanupFailed,
+                ..
+            }
+        )));
+        assert!(!sink.events().iter().any(|event| matches!(
+            event.payload,
+            EventPayload::WorkspaceDispositionRecorded {
+                disposition: WorkspaceDisposition::Removed,
+                ..
+            }
+        )));
     }
 }

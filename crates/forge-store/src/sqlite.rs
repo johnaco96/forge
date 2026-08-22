@@ -6,6 +6,7 @@
 
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use forge_core::agent::{AgentConfig, AgentDescriptor};
@@ -56,6 +57,9 @@ pub struct RunSummary {
 #[derive(Debug, Clone)]
 pub struct Store {
     pool: SqlitePool,
+    // Every file-backed Store holds a shared sidecar lock for its lifetime.
+    // Restore takes the corresponding exclusive lock before switching files.
+    _lock: Option<Arc<std::fs::File>>,
 }
 
 impl Store {
@@ -71,6 +75,7 @@ impl Store {
             })?;
         }
 
+        let lock = crate::backup::acquire_store_lock(path, false)?;
         let options = SqliteConnectOptions::new()
             .filename(path)
             .create_if_missing(true)
@@ -81,7 +86,7 @@ impl Store {
             // Concurrent agent runs write events while readers query history.
             .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
 
-        Self::connect(options).await
+        Self::connect(options, Some(Arc::new(lock))).await
     }
 
     /// An ephemeral ledger, for tests.
@@ -89,23 +94,26 @@ impl Store {
         let options = SqliteConnectOptions::from_str("sqlite::memory:")
             .expect("valid in-memory url")
             .foreign_keys(true);
-        Self::connect(options).await
+        Self::connect(options, None).await
     }
 
-    async fn connect(options: SqliteConnectOptions) -> StoreResult<Self> {
+    async fn connect(
+        options: SqliteConnectOptions,
+        lock: Option<Arc<std::fs::File>>,
+    ) -> StoreResult<Self> {
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self { pool, _lock: lock })
     }
 
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
-    pub async fn close(&self) {
+    pub async fn close(self) {
         self.pool.close().await;
     }
 

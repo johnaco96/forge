@@ -7,10 +7,13 @@
 //!
 //! # Security
 //!
-//! Forge starts Codex in a dedicated Git worktree and explicitly selects the
-//! CLI's `workspace-write` sandbox by default. This constrains model-generated
-//! commands but remains separate from Forge-managed OCI containment. Reports
-//! record both the Codex permission mode and the actual host boundary.
+//! Forge starts Codex in a dedicated Git worktree. Native development runs
+//! explicitly select the CLI's `workspace-write` sandbox by default. Required
+//! production runs instead use Forge's hardened OCI container as the one
+//! process boundary and disable Codex's nested sandbox: the Codex CLI documents
+//! that mode for externally sandboxed environments, and Linux namespace
+//! sandboxes cannot be composed inside Forge's capability-free container.
+//! Reports record which boundary was effective.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -27,12 +30,14 @@ use forge_core::security::ExecutionSandboxConfig;
 use forge_executor::{EnvPolicy, ExecRequest, ProcessRunner, find_executable};
 use serde::Deserialize;
 
-use crate::adapter::{AgentAdapter, RunContext};
+use crate::adapter::{AgentAdapter, RunContext, contained_agent_credentials};
 use crate::error::{AgentError, AgentResult};
 use crate::prompt::build_agent_prompt_with_context;
 
 /// Executable Forge looks for when none is configured.
 pub const DEFAULT_EXECUTABLE: &str = "codex";
+/// Credential-isolating launcher required in Forge's production OCI image.
+pub const CONTAINED_EXECUTABLE: &str = "codex-forge";
 /// Codex sandbox used for unattended coding runs.
 pub const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 /// Approval policy used for unattended coding runs.
@@ -41,6 +46,13 @@ pub const DEFAULT_SANDBOX_MODE: &str = "workspace-write";
 /// pausing for an approval Forge cannot answer; denied actions are returned to
 /// the model as failures.
 pub const DEFAULT_APPROVAL_POLICY: &str = "never";
+
+/// Fingerprinted adapter protocol selected by the runner for Codex runs.
+pub const EXECUTION_PROTOCOL_SETTING: &str = "forge.codex.execution_protocol";
+/// Codex uses its own sandbox when Forge host containment is disabled.
+pub const NATIVE_EXECUTION_PROTOCOL: &str = "codex-sandbox-v1";
+/// Codex runs without a nested sandbox inside Forge's required OCI boundary.
+pub const OUTER_OCI_EXECUTION_PROTOCOL: &str = "forge-oci-v1";
 
 const SANDBOX_MODES: &[&str] = &["read-only", "workspace-write", "danger-full-access"];
 const APPROVAL_POLICIES: &[&str] = &["untrusted", "on-request", "never"];
@@ -66,6 +78,7 @@ const RESERVED_EXTRA_ARGS: &[&str] = &[
     "--cd",
     "-C",
     "--dangerously-bypass-approvals-and-sandbox",
+    "--ephemeral",
     "--experimental-json",
     "--json",
     "--model",
@@ -84,6 +97,7 @@ pub struct CodexAdapter {
     approval_policy: String,
     extra_args: Vec<String>,
     containerized: bool,
+    contained_credential_configured: bool,
 }
 
 impl CodexAdapter {
@@ -95,6 +109,7 @@ impl CodexAdapter {
             approval_policy: DEFAULT_APPROVAL_POLICY.to_string(),
             extra_args: Vec::new(),
             containerized: false,
+            contained_credential_configured: false,
         }
     }
 
@@ -119,6 +134,11 @@ impl CodexAdapter {
                 .map(|raw| raw.split_whitespace().map(str::to_string).collect())
                 .unwrap_or_default(),
             containerized: matches!(config.sandbox, ExecutionSandboxConfig::Required { .. }),
+            contained_credential_configured: matches!(
+                &config.sandbox,
+                ExecutionSandboxConfig::Required { credential_env, .. }
+                    if credential_env.iter().any(|allowed| allowed == "CODEX_API_KEY")
+            ),
         }
     }
 
@@ -153,20 +173,39 @@ impl CodexAdapter {
     pub fn command_args(&self, prompt: &str, workspace: &Path) -> Vec<String> {
         // CLI 0.147 advertises approval as an `exec` option but only accepts it
         // before the subcommand. Keep all inherited global flags there.
-        let mut args = vec![
-            "--sandbox".to_string(),
-            self.sandbox_mode.clone(),
-            "--ask-for-approval".to_string(),
-            self.approval_policy.clone(),
-            "--cd".to_string(),
-            workspace.to_string_lossy().into_owned(),
-        ];
+        let mut args = if self.containerized {
+            // This is deliberately conditional on Forge's required OCI
+            // containment. Codex documents this flag for environments which
+            // already provide an external sandbox. Asking bubblewrap to create
+            // another namespace inside a capability-free container fails by
+            // design; weakening the outer container would be the unsafe fix.
+            vec![
+                "--dangerously-bypass-approvals-and-sandbox".to_string(),
+                "--cd".to_string(),
+                workspace.to_string_lossy().into_owned(),
+            ]
+        } else {
+            vec![
+                "--sandbox".to_string(),
+                self.sandbox_mode.clone(),
+                "--ask-for-approval".to_string(),
+                self.approval_policy.clone(),
+                "--cd".to_string(),
+                workspace.to_string_lossy().into_owned(),
+            ]
+        };
         if let Some(model) = &self.model {
             args.push("--model".to_string());
             args.push(model.clone());
         }
         args.push("exec".to_string());
         args.extend(self.extra_args.iter().cloned());
+        if self.containerized {
+            // The disposable OCI invocation is the durable evidence boundary;
+            // Codex must not also persist an internal session under its private
+            // HOME. Forge records the provider stream and candidate patch.
+            args.push("--ephemeral".to_string());
+        }
         args.push("--json".to_string());
         args.push(prompt.to_string());
         args
@@ -184,11 +223,18 @@ impl CodexAdapter {
     }
 
     fn command_label(&self, prompt: &str, workspace: &Path) -> String {
+        let security = if self.containerized {
+            "--dangerously-bypass-approvals-and-sandbox".to_string()
+        } else {
+            format!(
+                "--sandbox {} --ask-for-approval {}",
+                self.sandbox_mode, self.approval_policy
+            )
+        };
         format!(
-            "{} --sandbox {} --ask-for-approval {} --cd {}{} exec --json <prompt: {} chars>",
+            "{} {} --cd {}{} exec --json <prompt: {} chars>",
             self.executable,
-            self.sandbox_mode,
-            self.approval_policy,
+            security,
             workspace.display(),
             self.model
                 .as_ref()
@@ -235,6 +281,20 @@ impl CodexAdapter {
                 ),
             });
         }
+        if self.containerized && self.executable != CONTAINED_EXECUTABLE {
+            return Err(AgentError::Unavailable {
+                agent: "codex".into(),
+                reason: format!(
+                    "contained production execution requires credential-isolating executable `{CONTAINED_EXECUTABLE}`"
+                ),
+            });
+        }
+        if self.containerized && !self.contained_credential_configured {
+            return Err(AgentError::Unavailable {
+                agent: "codex".into(),
+                reason: "contained production execution requires CODEX_API_KEY in containment.credential_env".into(),
+            });
+        }
         Ok(())
     }
 
@@ -245,6 +305,24 @@ impl CodexAdapter {
                 self.approval_policy.clone(),
             ),
             ("codex.sandbox_mode".to_string(), self.sandbox_mode.clone()),
+            (
+                "codex.execution_boundary".to_string(),
+                if self.containerized {
+                    OUTER_OCI_EXECUTION_PROTOCOL
+                } else {
+                    NATIVE_EXECUTION_PROTOCOL
+                }
+                .to_string(),
+            ),
+            (
+                "codex.inner_sandbox".to_string(),
+                if self.containerized {
+                    "bypassed"
+                } else {
+                    "enabled"
+                }
+                .to_string(),
+            ),
         ]);
         if let Some(model) = &self.model {
             metadata.insert("codex.requested_model".to_string(), model.clone());
@@ -287,13 +365,20 @@ impl AgentAdapter for CodexAdapter {
     }
 
     fn security(&self) -> AgentSecurity {
-        AgentSecurity::new(
-            Some(format!(
-                "sandbox={}, approval={}",
-                self.sandbox_mode, self.approval_policy
-            )),
-            self.sandbox_mode == "danger-full-access",
-        )
+        if self.containerized {
+            AgentSecurity::new(
+                Some("inner sandbox=bypassed, boundary=Forge OCI".to_string()),
+                true,
+            )
+        } else {
+            AgentSecurity::new(
+                Some(format!(
+                    "sandbox={}, approval={}",
+                    self.sandbox_mode, self.approval_policy
+                )),
+                self.sandbox_mode == "danger-full-access",
+            )
+        }
     }
 
     async fn prepare(&self) -> AgentResult<()> {
@@ -309,6 +394,7 @@ impl AgentAdapter for CodexAdapter {
     }
 
     async fn execute(&self, ctx: &RunContext<'_>) -> AgentResult<AgentExecution> {
+        self.validate_config()?;
         let started_at = Utc::now();
         let prompt = build_agent_prompt_with_context(ctx.task, ctx.workspace, ctx.world_model);
 
@@ -326,6 +412,10 @@ impl AgentAdapter for CodexAdapter {
         let mut request = ExecRequest::program(&self.executable, args, &ctx.workspace.path)
             .with_label(label)
             .with_default_timeout(ctx.timeout);
+        request = request.with_required_credentials(contained_agent_credentials(
+            &ctx.config.sandbox,
+            CREDENTIAL_VARS,
+        ));
         if let Some(watch) = &ctx.disk_watch {
             request = request.with_disk_watch(watch.clone());
         }
@@ -346,7 +436,9 @@ impl AgentAdapter for CodexAdapter {
         }
 
         let execution = AgentExecution {
-            status: if outcome.infrastructure_failures.is_empty() {
+            status: if outcome.cancelled {
+                forge_core::run::AgentExecutionStatus::Cancelled
+            } else if outcome.infrastructure_failures.is_empty() {
                 AgentExecution::classify(outcome.exit_code, outcome.timed_out)
             } else {
                 forge_core::run::AgentExecutionStatus::Cancelled
@@ -555,9 +647,24 @@ mod tests {
     use super::*;
     use forge_core::agent::AgentConfig;
     use forge_core::run::AgentExecutionStatus;
+    use forge_core::security::NetworkPolicy;
 
     fn adapter() -> CodexAdapter {
         CodexAdapter::new()
+    }
+
+    fn required_containment() -> ExecutionSandboxConfig {
+        ExecutionSandboxConfig::Required {
+            runtime: "docker".into(),
+            image: format!("forge@sha256:{}", "a".repeat(64)),
+            network: NetworkPolicy::Allowed,
+            restricted_network: None,
+            cpu_millis: 2_000,
+            memory_bytes: 1024 * 1024 * 1024,
+            pids_limit: 128,
+            workspace_limit_bytes: 4 * 1024 * 1024 * 1024,
+            credential_env: vec!["CODEX_API_KEY".into()],
+        }
     }
 
     #[test]
@@ -580,6 +687,29 @@ mod tests {
     }
 
     #[test]
+    fn contained_command_uses_outer_boundary_without_requesting_nested_namespaces() {
+        let mut config = AgentConfig::new(AgentId::new("codex").unwrap(), "codex-cli");
+        config.sandbox = required_containment();
+        let adapter = CodexAdapter::from_config(&config);
+        let args = adapter.command_args("probe", Path::new("/workspace"));
+
+        assert_eq!(
+            args,
+            vec![
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--cd",
+                "/workspace",
+                "exec",
+                "--ephemeral",
+                "--json",
+                "probe",
+            ]
+        );
+        assert!(!args.iter().any(|argument| argument == "--sandbox"));
+        assert!(!args.iter().any(|argument| argument == "--ask-for-approval"));
+    }
+
+    #[test]
     fn settings_override_executable_model_and_permission_modes() {
         let mut config = AgentConfig::new(AgentId::new("codex").unwrap(), "codex-cli");
         config.model = Some("gpt-5-codex".to_string());
@@ -587,10 +717,7 @@ mod tests {
             ("executable".to_string(), "/opt/codex".to_string()),
             ("sandbox_mode".to_string(), "danger-full-access".to_string()),
             ("approval_policy".to_string(), "on-request".to_string()),
-            (
-                "extra_args".to_string(),
-                "--ephemeral --color never".to_string(),
-            ),
+            ("extra_args".to_string(), "--color never".to_string()),
         ]);
 
         let adapter = CodexAdapter::from_config(&config);
@@ -608,7 +735,8 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--ask-for-approval", "on-request"])
         );
-        assert!(args.contains(&"--ephemeral".to_string()));
+        assert!(args.windows(2).any(|pair| pair == ["--color", "never"]));
+        assert!(!args.contains(&"--ephemeral".to_string()));
     }
 
     #[test]
@@ -627,6 +755,20 @@ mod tests {
         let reserved = adapter().with_extra_args(vec!["--sandbox=danger-full-access".into()]);
         let error = reserved.validate_config().unwrap_err().to_string();
         assert!(error.contains("reserved"), "{error}");
+    }
+
+    #[test]
+    fn contained_execution_requires_the_credential_isolating_wrapper() {
+        let mut config = AgentConfig::new(AgentId::new("codex").unwrap(), "codex-cli");
+        config.sandbox = required_containment();
+        let direct = CodexAdapter::from_config(&config);
+        let error = direct.validate_config().unwrap_err().to_string();
+        assert!(error.contains(CONTAINED_EXECUTABLE), "{error}");
+
+        config
+            .settings
+            .insert("executable".into(), CONTAINED_EXECUTABLE.into());
+        assert!(CodexAdapter::from_config(&config).validate_config().is_ok());
     }
 
     #[test]
@@ -729,6 +871,16 @@ mod tests {
 
         let full_access = adapter().with_sandbox_mode("danger-full-access");
         assert!(AgentAdapter::security(&full_access).unrestricted);
+
+        let mut config = AgentConfig::new(AgentId::new("codex").unwrap(), "codex-cli");
+        config.sandbox = required_containment();
+        let contained = CodexAdapter::from_config(&config);
+        let security = AgentAdapter::security(&contained);
+        assert_eq!(
+            security.permission_mode.as_deref(),
+            Some("inner sandbox=bypassed, boundary=Forge OCI")
+        );
+        assert!(security.unrestricted);
     }
 
     #[tokio::test]

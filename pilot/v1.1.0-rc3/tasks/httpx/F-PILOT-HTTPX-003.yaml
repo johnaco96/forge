@@ -1,0 +1,26 @@
+task_id: F-PILOT-HTTPX-003
+repository: httpx
+objective: >-
+  Add HTTP Digest qop=auth-int support for replayable request bodies. Hash the
+  entity body as RFC 7616 requires, continue to prefer auth when a challenge
+  offers both auth and auth-int, and fail clearly for bodies that cannot be
+  replayed without consuming a stream twice.
+constraints:
+  - Preserve existing auth and legacy Digest behavior
+  - Do not buffer an unbounded streaming request body implicitly
+  - Add focused synchronous and asynchronous tests
+protected_paths: ["requirements.txt", "LICENSE.md", ".github/**"]
+evaluation:
+  tests:
+    command: "python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && .pilot-venv/bin/pytest -q tests/test_auth.py"
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+  lint:
+    command: 'python3 -m venv .pilot-venv && .pilot-venv/bin/pip install -q -r requirements.txt && PATH="$PWD/.pilot-venv/bin:$PATH" ./scripts/check'
+    timeout_secs: 1200
+    required_tools:
+      - { executable: python3, version_contains: "Python 3.11." }
+classification: { category: feature, language: python, domain: authentication, difficulty: hard }
+components: ["httpx/_auth.py", "tests/test_auth.py"]
+tags: ["pilot-v1.1.0-rc", "digest", "rfc7616"]

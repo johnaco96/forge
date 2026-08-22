@@ -4,14 +4,15 @@
 //! goes through here, so that all of them are timed, bounded, logged as events,
 //! and cleaned up the same way.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use forge_core::events::{EventPayload, EventSink};
-use forge_core::run::InfrastructureFailure;
+use forge_core::run::{InfrastructureFailure, InfrastructureFailureKind};
+use forge_core::task::EvaluatorToolRequirement;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
@@ -34,6 +35,36 @@ const PIPE_DRAIN_GRACE: Duration = Duration::from_secs(5);
 /// How long a killed process gets to exit before it is killed harder.
 const TERM_GRACE: Duration = Duration::from_secs(2);
 
+/// Provider credentials explicitly required by one process invocation.
+///
+/// The empty default is intentional: independent evaluators and ordinary
+/// commands receive no provider credential merely because they share an OCI
+/// sandbox with an agent command.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CredentialPolicy {
+    required: BTreeSet<String>,
+}
+
+impl CredentialPolicy {
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    pub fn requiring(names: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self {
+            required: names.into_iter().map(Into::into).collect(),
+        }
+    }
+
+    pub fn required_names(&self) -> impl Iterator<Item = &str> {
+        self.required.iter().map(String::as_str)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.required.is_empty()
+    }
+}
+
 /// One command to run.
 #[derive(Debug, Clone)]
 pub struct ExecRequest {
@@ -43,6 +74,8 @@ pub struct ExecRequest {
     pub timeout: Option<Duration>,
     /// Extra variables layered on top of the runner's environment policy.
     pub env: BTreeMap<String, String>,
+    /// Credentials required for this invocation only. Empty by default.
+    pub credential_policy: CredentialPolicy,
     /// Human-readable form used in events and errors.
     pub label: String,
     /// Emergency disk floor monitored for the lifetime of the process.
@@ -60,6 +93,7 @@ impl ExecRequest {
             cwd: cwd.into(),
             timeout: None,
             env: BTreeMap::new(),
+            credential_policy: CredentialPolicy::none(),
             label: command,
             disk_watch: None,
         }
@@ -84,6 +118,7 @@ impl ExecRequest {
             cwd: cwd.into(),
             timeout: None,
             env: BTreeMap::new(),
+            credential_policy: CredentialPolicy::none(),
             label,
             disk_watch: None,
         }
@@ -111,6 +146,20 @@ impl ExecRequest {
         self
     }
 
+    /// Requires named credentials for this command. Contained execution also
+    /// verifies that every name was approved by the sandbox configuration.
+    pub fn with_required_credentials(
+        mut self,
+        names: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.credential_policy = CredentialPolicy::requiring(names);
+        self
+    }
+
+    pub fn with_required_credential(self, name: impl Into<String>) -> Self {
+        self.with_required_credentials([name])
+    }
+
     pub fn with_label(mut self, label: impl Into<String>) -> Self {
         self.label = label.into();
         self
@@ -132,6 +181,8 @@ pub struct ExecOutcome {
     pub stderr: String,
     pub duration: Duration,
     pub timed_out: bool,
+    /// The operator interrupted the command (normally with Ctrl-C).
+    pub cancelled: bool,
     pub stdout_truncated: bool,
     pub stderr_truncated: bool,
     /// Operational causes for controlled termination. These remain separate
@@ -221,6 +272,69 @@ impl ProcessRunner {
         &self.policy
     }
 
+    /// Checks one declared evaluator executable in the same environment and
+    /// sandbox used by the command itself. A non-zero probe is infrastructure
+    /// unavailability, not candidate engineering evidence.
+    pub async fn preflight_evaluator_tool(
+        &self,
+        cwd: &Path,
+        evaluator_id: &str,
+        requirement: &EvaluatorToolRequirement,
+        events: &dyn EventSink,
+    ) -> ExecResult<String> {
+        let executable = &requirement.executable;
+        let request = ExecRequest::program(
+            "/bin/sh",
+            [
+                "-c",
+                "command -v -- \"$1\" >/dev/null && \"$1\" --version",
+                "forge-evaluator-tool-preflight",
+                executable,
+            ],
+            cwd,
+        )
+        .with_label(format!(
+            "evaluator `{evaluator_id}` prerequisite `{executable}`"
+        ));
+        let outcome = self.run(&request, events).await?;
+        let reported = [outcome.stdout.trim(), outcome.stderr.trim()]
+            .into_iter()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let available = outcome.success()
+            && requirement
+                .version_contains
+                .as_deref()
+                .is_none_or(|expected| reported.contains(expected));
+        if available {
+            return Ok(reported);
+        }
+
+        let detail = if let Some(expected) = &requirement.version_contains
+            && outcome.success()
+        {
+            format!(
+                "evaluator `{evaluator_id}` requires tool `{executable}` with version output containing `{expected}`, but it reported `{reported}`"
+            )
+        } else {
+            format!(
+                "evaluator `{evaluator_id}` requires unavailable tool `{executable}`{}",
+                if reported.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {reported}")
+                }
+            )
+        };
+        let error = ExecError::Infrastructure(InfrastructureFailure::new(
+            InfrastructureFailureKind::EvaluatorToolUnavailable,
+            detail,
+        ));
+        emit_infrastructure_error(events, &error);
+        Err(error)
+    }
+
     /// Runs a command to completion, emitting a `CommandExecuted` event.
     ///
     /// A non-zero exit is a normal outcome, not an error: a failing test
@@ -231,7 +345,19 @@ impl ProcessRunner {
         request: &ExecRequest,
         events: &dyn EventSink,
     ) -> ExecResult<ExecOutcome> {
-        let outcome = self.spawn_and_wait(request, events).await?;
+        let mut child_env = self.policy.build();
+        child_env.extend(request.env.clone());
+        let invocation_redactor =
+            match credential_redactor(&self.redactor, &request.credential_policy, &child_env) {
+                Ok(redactor) => redactor,
+                Err(error) => {
+                    emit_infrastructure_error(events, &error);
+                    return Err(error);
+                }
+            };
+        let outcome = self
+            .spawn_and_wait(request, events, child_env, &invocation_redactor)
+            .await?;
 
         for failure in &outcome.infrastructure_failures {
             events.emit(EventPayload::InfrastructureFailureObserved {
@@ -241,7 +367,7 @@ impl ProcessRunner {
         }
 
         events.emit(EventPayload::CommandExecuted {
-            command: self.redactor.redact(&outcome.label),
+            command: invocation_redactor.redact(&outcome.label),
             exit_code: outcome.event_exit_code(),
             duration_ms: outcome.duration_ms(),
         });
@@ -253,21 +379,16 @@ impl ProcessRunner {
         &self,
         request: &ExecRequest,
         events: &dyn EventSink,
+        child_env: BTreeMap<String, String>,
+        invocation_redactor: &Redactor,
     ) -> ExecResult<ExecOutcome> {
         if !request.cwd.is_dir() {
             return Err(ExecError::MissingWorkingDirectory(request.cwd.clone()));
         }
 
-        let mut child_env = self.policy.build();
-        child_env.extend(request.env.clone());
         let invocation = if let Some(sandbox) = &self.sandbox {
             if let Err(error) = sandbox.preflight().await {
-                if let ExecError::Infrastructure(failure) = &error {
-                    events.emit(EventPayload::InfrastructureFailureObserved {
-                        kind: failure.kind,
-                        detail: failure.detail.clone(),
-                    });
-                }
+                emit_infrastructure_error(events, &error);
                 return Err(error);
             }
             events.emit(EventPayload::SandboxPrepared {
@@ -276,12 +397,7 @@ impl ProcessRunner {
             match sandbox.wrap(request, &child_env) {
                 Ok(invocation) => invocation,
                 Err(error) => {
-                    if let ExecError::Infrastructure(failure) = &error {
-                        events.emit(EventPayload::InfrastructureFailureObserved {
-                            kind: failure.kind,
-                            detail: failure.detail.clone(),
-                        });
-                    }
+                    emit_infrastructure_error(events, &error);
                     return Err(error);
                 }
             }
@@ -340,6 +456,9 @@ impl ProcessRunner {
             .map(|limit| tokio::time::Instant::now() + limit);
         let disk_watch = request.disk_watch.as_ref().or(self.disk_watch.as_ref());
         let mut timed_out = false;
+        let mut cancelled = false;
+        let mut interrupt = Box::pin(tokio::signal::ctrl_c());
+        let mut interrupt_unavailable = false;
         let mut infrastructure_failures = Vec::new();
         let status = loop {
             let timeout_at = deadline.unwrap_or_else(|| {
@@ -356,6 +475,22 @@ impl ProcessRunner {
                     terminate(&mut child, pid).await;
                     break None;
                 }
+                signal = &mut interrupt, if !interrupt_unavailable => {
+                    match signal {
+                        Ok(()) => {
+                            cancelled = true;
+                            tracing::warn!(command = %request.label, "command cancelled; killing");
+                            terminate(&mut child, pid).await;
+                            break None;
+                        }
+                        Err(error) => {
+                            // Signal registration can fail on unusual embedded
+                            // runtimes. Disable this select arm rather than spin.
+                            tracing::warn!(%error, "Ctrl-C handler is unavailable");
+                            interrupt_unavailable = true;
+                        }
+                    }
+                }
                 _ = tokio::time::sleep(watch_interval), if disk_watch.is_some() => {
                     if let Some(watch) = disk_watch
                         && let Err(ExecError::Infrastructure(failure)) = watch.check()
@@ -368,6 +503,13 @@ impl ProcessRunner {
                 }
             }
         };
+
+        // A successful parent can still leave background descendants holding
+        // output pipes or mutating the workspace. The process group is Forge's
+        // lifecycle boundary, so reap it even after an ordinary parent exit.
+        if status.is_some() {
+            terminate_descendants(pid).await;
+        }
 
         if let Some(sandbox) = &self.sandbox {
             match sandbox.post_run().await {
@@ -388,14 +530,47 @@ impl ProcessRunner {
         Ok(ExecOutcome {
             label: request.label.clone(),
             exit_code: status.and_then(|s| s.code()),
-            stdout: self.redactor.redact(&stdout),
-            stderr: self.redactor.redact(&stderr),
+            stdout: invocation_redactor.redact(&stdout),
+            stderr: invocation_redactor.redact(&stderr),
             duration: started.elapsed(),
             timed_out,
+            cancelled,
             stdout_truncated,
             stderr_truncated,
             infrastructure_failures,
         })
+    }
+}
+
+fn credential_redactor(
+    base: &Redactor,
+    policy: &CredentialPolicy,
+    child_env: &BTreeMap<String, String>,
+) -> ExecResult<Redactor> {
+    let mut redactor = base.clone();
+    for name in policy.required_names() {
+        let value = child_env
+            .get(name)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                ExecError::Infrastructure(InfrastructureFailure::new(
+                    InfrastructureFailureKind::CredentialUnavailable,
+                    format!(
+                        "credential `{name}` required by this command is not present or is empty"
+                    ),
+                ))
+            })?;
+        redactor = redactor.with_secret(value);
+    }
+    Ok(redactor)
+}
+
+fn emit_infrastructure_error(events: &dyn EventSink, error: &ExecError) {
+    if let ExecError::Infrastructure(failure) = error {
+        events.emit(EventPayload::InfrastructureFailureObserved {
+            kind: failure.kind,
+            detail: failure.detail.clone(),
+        });
     }
 }
 
@@ -476,6 +651,24 @@ async fn terminate(child: &mut tokio::process::Child, pid: Option<u32>) {
 
     let _ = child.kill().await;
     let _ = child.wait().await;
+}
+
+/// Stops processes which outlived an otherwise completed group leader.
+async fn terminate_descendants(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        let group = -(pid as i32);
+        let signalled = unsafe { libc::kill(group, libc::SIGTERM) } == 0;
+        if signalled {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            unsafe {
+                libc::kill(group, libc::SIGKILL);
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    let _ = pid;
 }
 
 /// Finds an executable on `PATH`.
@@ -707,6 +900,28 @@ mod tests {
         assert!(!survived, "a descendant outlived the timed-out command");
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_completed_parent_cannot_leave_background_children() {
+        let marker = cwd().join(format!("forge-completed-orphan-{}", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        let script = format!(
+            "sh -c 'sleep 2; touch {}' & exit 0",
+            marker.to_string_lossy()
+        );
+
+        let outcome = runner()
+            .run(&ExecRequest::shell(script, cwd()), &NullSink)
+            .await
+            .unwrap();
+        assert!(outcome.success());
+
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let survived = marker.exists();
+        let _ = std::fs::remove_file(&marker);
+        assert!(!survived, "a descendant outlived its completed parent");
+    }
+
     #[tokio::test]
     async fn output_is_capped_and_reported_as_truncated() {
         let outcome = runner()
@@ -741,6 +956,78 @@ mod tests {
             outcome.stdout
         );
         assert!(outcome.stdout.contains(crate::sandbox::REDACTED));
+    }
+
+    #[tokio::test]
+    async fn a_legitimately_required_missing_credential_fails_closed() {
+        let sink = RecordingSink::new(RunId::sequential(3));
+        let error = ProcessRunner::new(EnvPolicy::empty())
+            .run(
+                &ExecRequest::shell("true", cwd()).with_required_credential("CODEX_API_KEY"),
+                &sink,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ExecError::Infrastructure(InfrastructureFailure {
+                kind: InfrastructureFailureKind::CredentialUnavailable,
+                ..
+            })
+        ));
+        assert!(matches!(
+            sink.events().as_slice(),
+            [forge_core::events::Event {
+                payload: EventPayload::InfrastructureFailureObserved {
+                    kind: InfrastructureFailureKind::CredentialUnavailable,
+                    ..
+                },
+                ..
+            }]
+        ));
+    }
+
+    #[tokio::test]
+    async fn invocation_credentials_are_redacted_even_when_set_on_the_request() {
+        const SECRET: &str = "codex-request-secret-never-retain";
+        let outcome = ProcessRunner::new(EnvPolicy::empty())
+            .run(
+                &ExecRequest::shell("printf '%s' \"$CODEX_API_KEY\"", cwd())
+                    .with_env("CODEX_API_KEY", SECRET)
+                    .with_required_credential("CODEX_API_KEY"),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+
+        assert!(outcome.success());
+        assert!(!outcome.stdout.contains(SECRET));
+        assert_eq!(outcome.stdout, crate::sandbox::REDACTED);
+    }
+
+    #[tokio::test]
+    async fn explicitly_required_short_credentials_are_always_redacted() {
+        const SHORT_SECRET: &str = "tiny";
+        let outcome = ProcessRunner::new(EnvPolicy::empty())
+            .run(
+                &ExecRequest::shell("printf '%s' \"$CODEX_API_KEY\"", cwd())
+                    .with_env("CODEX_API_KEY", SHORT_SECRET)
+                    .with_required_credential("CODEX_API_KEY"),
+                &NullSink,
+            )
+            .await
+            .unwrap();
+
+        assert!(outcome.success());
+        assert_eq!(outcome.stdout, crate::sandbox::REDACTED);
+        assert!(!outcome.stdout.contains(SHORT_SECRET));
+    }
+
+    #[test]
+    fn evaluator_style_requests_require_no_credentials_by_default() {
+        let request = ExecRequest::shell("true", cwd());
+        assert!(request.credential_policy.is_empty());
     }
 
     #[tokio::test]
@@ -808,6 +1095,7 @@ mod tests {
             stderr: (1..=10).map(|i| format!("line {i}\n")).collect(),
             duration: Duration::ZERO,
             timed_out: false,
+            cancelled: false,
             stdout_truncated: false,
             stderr_truncated: false,
             infrastructure_failures: Vec::new(),

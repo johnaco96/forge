@@ -59,6 +59,9 @@ pub enum ExecutionSandboxConfig {
         pids_limit: u32,
         #[serde(default = "default_workspace_limit_bytes")]
         workspace_limit_bytes: u64,
+        /// Names a contained command may explicitly request. This is an
+        /// allowlist, not a sandbox-wide requirement or container-level
+        /// environment: each invocation defaults to requesting none.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         credential_env: Vec<String>,
     },
