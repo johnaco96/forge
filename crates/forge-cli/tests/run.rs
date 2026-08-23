@@ -650,10 +650,20 @@ fn an_unknown_agent_is_refused_with_a_pointer_to_the_listing() {
 #[test]
 fn auto_agent_stops_without_forcing_a_choice_when_history_is_absent() {
     let fixture = Fixture::new();
+    let claude = fixture.stub("");
+    let codex = fixture.codex_stub("");
+    fixture.use_stub(&claude);
+    fixture.use_codex_stub(&codex);
     let task = fixture.write_task("raise.yaml", &task_yaml("  tests:\n    command: true\n"));
 
     let output = fixture.forge(&["run", &task, "--agent", "auto"]);
-    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "stdout:\n{}\nstderr:\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
     assert!(
         stdout(&output).contains("Forge routing"),
         "{}\n{}",
@@ -665,6 +675,14 @@ fn auto_agent_stops_without_forcing_a_choice_when_history_is_absent() {
             || stdout(&output).contains("INSUFFICIENT EVIDENCE"),
         "{}",
         stdout(&output)
+    );
+    assert!(
+        claude.recorded_args().is_empty(),
+        "Claude should not have run"
+    );
+    assert!(
+        codex.recorded_args().is_empty(),
+        "Codex should not have run"
     );
 }
 
