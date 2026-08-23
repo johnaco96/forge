@@ -40,7 +40,7 @@ decision into a temporary SQLite store and invokes the production Store and
 RoutingContract:
 
     cargo run -p forge-router --bin forge-router-replay -- \
-      --input .forge/validation-archive/tier1-master.jsonl --summary
+      --input validation/fixtures/tier1-router-replay.jsonl --summary
 
 Repeated summary output is byte-identical. Tier 1 contained 20 paired tasks; 14
 were post-readiness, and the largest post-readiness score margin was about 0.021633.

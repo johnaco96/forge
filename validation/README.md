@@ -105,6 +105,7 @@ validation/
   campaign.yaml        machine-readable manifest (tasks, agents, modes, metrics)
   analysis-plan.md     pre-registered analysis rules — written before results
   taxonomy.md          category / difficulty / component / tag vocabulary
+  fixtures/            sanitized immutable inputs for deterministic CI replay
   tasks/               20 real Forge engineering tasks (IDs are not contiguous;
                        retired tasks are recorded in campaign.yaml)
   scripts/

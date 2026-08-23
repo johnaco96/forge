@@ -25,8 +25,9 @@ jobs:
       - run: ./scripts/migration-gate.sh
       - name: Exact Rust router replay is byte-deterministic
         run: |
-          cargo run -q -p forge-router --bin forge-router-replay -- --input .forge/validation-archive/tier1-master.jsonl --summary > /tmp/replay-a.jsonl
-          cargo run -q -p forge-router --bin forge-router-replay -- --input .forge/validation-archive/tier1-master.jsonl --summary > /tmp/replay-b.jsonl
+          test "$(sha256sum validation/fixtures/tier1-router-replay.jsonl | awk '{print $1}')" = "fd8c450c15832d8e6df099b30926ce58a2bae3457e1411bc8c985f40cfa18233"
+          cargo run -q -p forge-router --bin forge-router-replay -- --input validation/fixtures/tier1-router-replay.jsonl --summary > /tmp/replay-a.jsonl
+          cargo run -q -p forge-router --bin forge-router-replay -- --input validation/fixtures/tier1-router-replay.jsonl --summary > /tmp/replay-b.jsonl
           cmp /tmp/replay-a.jsonl /tmp/replay-b.jsonl
           test "$(sha256sum /tmp/replay-a.jsonl | awk '{print $1}')" = "a1f48136b207e022f8d9dd2e655a9b6ff75ced8221d129a4aa918ca39a0cf5a0"
       - name: Doctor identifies development containment as not production-ready

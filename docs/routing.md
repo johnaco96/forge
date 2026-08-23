@@ -180,7 +180,7 @@ compact summary:
 
 ```bash
 cargo run -p forge-router --bin forge-router-replay -- \
-  --input .forge/validation-archive/tier1-master.jsonl --summary
+  --input validation/fixtures/tier1-router-replay.jsonl --summary
 ```
 
 The operational ledger is never opened. Ledger-local run IDs are remapped in a
